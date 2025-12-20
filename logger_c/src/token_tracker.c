@@ -19,8 +19,9 @@
 #include "filter.h"
 #include "output.h"
 
-/* GMGN API endpoint for token info */
-#define GMGN_TOKEN_API "https://gmgn.ai/api/v1/token_info/sol/"
+/* GMGN API endpoints */
+#define GMGN_KOL_HOLDERS_API "https://gmgn.ai/vas/api/v1/token_holders/sol/"
+#define GMGN_MCAP_CANDLES_API "https://gmgn.ai/api/v1/token_mcap_candles/sol/"
 
 /**
  * @brief CURL response buffer
@@ -52,21 +53,65 @@ static size_t curl_write_cb(void *contents, size_t size, size_t nmemb,
 }
 
 /**
- * @brief Fetch token info from GMGN API
+ * @brief Setup common CURL options for GMGN API calls
  */
-static int fetch_token_info(const char *address, token_info_t *info) {
+static void setup_curl_common(CURL *curl, curl_buffer_t *buffer, 
+                              const char *url, struct curl_slist **headers) {
+    char cookie_header[2048];
+    
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, buffer);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, TRACKER_API_TIMEOUT);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, 
+        "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0");
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    
+    /* Set Cloudflare session cookies */
+    snprintf(cookie_header, sizeof(cookie_header),
+        "cf_clearance=%s; _ga=%s; _ga_0XM0LYXGC8=%s; __cf_bm=%s",
+        getenv("GMGN_CF_CLEARANCE") ? getenv("GMGN_CF_CLEARANCE") : "",
+        getenv("GMGN_GA") ? getenv("GMGN_GA") : "",
+        getenv("GMGN_GA_SESSION") ? getenv("GMGN_GA_SESSION") : "",
+        getenv("GMGN_CF_BM") ? getenv("GMGN_CF_BM") : "");
+    curl_easy_setopt(curl, CURLOPT_COOKIE, cookie_header);
+    
+    /* Browser-like headers */
+    *headers = curl_slist_append(*headers, "Accept: application/json");
+    *headers = curl_slist_append(*headers, "Accept-Language: en-US,en;q=0.5");
+    *headers = curl_slist_append(*headers, "Referer: https://gmgn.ai/");
+    *headers = curl_slist_append(*headers, "Origin: https://gmgn.ai");
+    *headers = curl_slist_append(*headers, "Sec-Fetch-Dest: empty");
+    *headers = curl_slist_append(*headers, "Sec-Fetch-Mode: cors");
+    *headers = curl_slist_append(*headers, "Sec-Fetch-Site: same-origin");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, *headers);
+}
+
+/**
+ * @brief Fetch KOL count from GMGN token holders API
+ * 
+ * Uses /vas/api/v1/token_holders/sol/{address}?tag=renowned endpoint
+ * Returns count of KOL/smart_degen holders
+ */
+static int fetch_kol_count(const char *address, uint8_t *kol_count) {
     CURL *curl;
     CURLcode res;
     curl_buffer_t buffer = {0};
-    char url[512];
-    char cookie_header[2048];
+    char url[768];
+    struct curl_slist *headers = NULL;
     int ret = -1;
     
-    if (!address || !info) {
+    if (!address || !kol_count) {
         return -1;
     }
     
-    snprintf(url, sizeof(url), "%s%s", GMGN_TOKEN_API, address);
+    *kol_count = 0;
+    
+    /* Build URL with query params for renowned/KOL holders */
+    snprintf(url, sizeof(url), 
+        "%s%s?tag=renowned&limit=10&orderby=amount_percentage&direction=desc",
+        GMGN_KOL_HOLDERS_API, address);
     
     curl = curl_easy_init();
     if (!curl) {
@@ -76,34 +121,7 @@ static int fetch_token_info(const char *address, token_info_t *info) {
     buffer.data = malloc(1);
     buffer.size = 0;
     
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, TRACKER_API_TIMEOUT);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, 
-        "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0");
-    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ""); /* Let curl handle decompression */
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    
-    /* Set Cloudflare session cookies - CRITICAL FOR API ACCESS */
-    snprintf(cookie_header, sizeof(cookie_header),
-        "cf_clearance=%s; _ga=%s; _ga_0XM0LYXGC8=%s; __cf_bm=%s",
-        getenv("GMGN_CF_CLEARANCE") ? getenv("GMGN_CF_CLEARANCE") : "",
-        getenv("GMGN_GA") ? getenv("GMGN_GA") : "GA1.1.1216464152.1766234082",
-        getenv("GMGN_GA_SESSION") ? getenv("GMGN_GA_SESSION") : "GS1.1.1766242908.4.1.1766245615.56.0.0",
-        getenv("GMGN_CF_BM") ? getenv("GMGN_CF_BM") : "");
-    curl_easy_setopt(curl, CURLOPT_COOKIE, cookie_header);
-    
-    /* Add headers to look like browser */
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Accept: application/json");
-    headers = curl_slist_append(headers, "Accept-Language: en-US,en;q=0.5");
-    headers = curl_slist_append(headers, "Referer: https://gmgn.ai/");
-    headers = curl_slist_append(headers, "Origin: https://gmgn.ai");
-    headers = curl_slist_append(headers, "Sec-Fetch-Dest: empty");
-    headers = curl_slist_append(headers, "Sec-Fetch-Mode: cors");
-    headers = curl_slist_append(headers, "Sec-Fetch-Site: same-origin");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    setup_curl_common(curl, &buffer, url, &headers);
     
     res = curl_easy_perform(curl);
     
@@ -112,83 +130,50 @@ static int fetch_token_info(const char *address, token_info_t *info) {
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
         
         if (http_code == 200) {
-            /* Parse JSON response */
             cJSON *json = cJSON_Parse(buffer.data);
             if (json) {
+                cJSON *code = cJSON_GetObjectItemCaseSensitive(json, "code");
                 cJSON *data = cJSON_GetObjectItemCaseSensitive(json, "data");
-                if (data && cJSON_IsObject(data)) {
-                    /* Debug: print response for first few chars */
-                    char *json_str = cJSON_Print(data);
-                    if (json_str) {
-                        printf("[API] Response data (500 chars): %.500s\n", json_str);
-                        fflush(stdout);
-                        free(json_str);
-                    }
+                
+                if (code && cJSON_IsNumber(code) && code->valueint == 0 &&
+                    data && cJSON_IsObject(data)) {
                     
-                    /* 
-                     * API returns fields directly in data, not nested in "token".
-                     * Look for market_cap, kol/smart_degen, holder_count directly.
-                     */
-                    cJSON *mc = cJSON_GetObjectItemCaseSensitive(data, "market_cap");
-                    if (!mc) {
-                        mc = cJSON_GetObjectItemCaseSensitive(data, "usd_market_cap");
-                    }
-                    if (mc && cJSON_IsNumber(mc)) {
-                        info->market_cap = (uint64_t)(mc->valuedouble * 100.0);
-                    }
-                    
-                    cJSON *kol = cJSON_GetObjectItemCaseSensitive(data, "smart_degen");
-                    if (!kol) {
-                        kol = cJSON_GetObjectItemCaseSensitive(data, "kol_count");
-                    }
-                    if (kol && cJSON_IsNumber(kol)) {
-                        info->kol_count = (uint8_t)kol->valueint;
-                    }
-                    
-                    cJSON *holders = cJSON_GetObjectItemCaseSensitive(data, "holder_count");
-                    if (holders && cJSON_IsNumber(holders)) {
-                        info->holder_count = (uint32_t)holders->valueint;
-                    }
-                    
-                    printf("[API] Token %s: MC=$%.2fK, KOL=%d, holders=%d\n",
-                           address,
-                           info->market_cap / 100000.0,  /* Convert cents to thousands */
-                           info->kol_count,
-                           info->holder_count);
-                    fflush(stdout);
-                    
-                    /* Consider success if we got at least market cap */
-                    if (info->market_cap > 0 || info->holder_count > 0) {
+                    cJSON *list = cJSON_GetObjectItemCaseSensitive(data, "list");
+                    if (list && cJSON_IsArray(list)) {
+                        int count = cJSON_GetArraySize(list);
+                        
+                        /* Count entries that have "kol" or "smart_degen" in tags */
+                        int kol_total = 0;
+                        cJSON *holder = NULL;
+                        cJSON_ArrayForEach(holder, list) {
+                            cJSON *tags = cJSON_GetObjectItemCaseSensitive(holder, "tags");
+                            if (tags && cJSON_IsArray(tags)) {
+                                cJSON *tag = NULL;
+                                cJSON_ArrayForEach(tag, tags) {
+                                    if (cJSON_IsString(tag)) {
+                                        if (strcmp(tag->valuestring, "kol") == 0 ||
+                                            strcmp(tag->valuestring, "smart_degen") == 0) {
+                                            kol_total++;
+                                            break; /* Count each holder once */
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        /* If no explicit kol/smart_degen tags, use list count
+                         * (renowned tag already filters for notable holders) */
+                        if (kol_total == 0 && count > 0) {
+                            kol_total = count;
+                        }
+                        
+                        *kol_count = (uint8_t)(kol_total > 255 ? 255 : kol_total);
                         ret = 0;
-                    } else {
-                        /* Check if there's any numeric field we got */
-                        ret = 0; /* Still consider it success */
                     }
-                } else {
-                    printf("[API] Token %s: No 'data' object in response\n", address);
-                    fflush(stdout);
                 }
                 cJSON_Delete(json);
-            } else {
-                /* Debug: API returned 200 but invalid JSON */
-                printf("[API] Token %s: HTTP %ld but parse failed\n", 
-                        address, http_code);
-                /* Print first 500 chars of response for debugging */
-                printf("[API] Response: %.500s\n", buffer.data ? buffer.data : "(null)");
-                fflush(stdout);
             }
         }
-    } else {
-        /* Debug: API call failed */
-        if (res != CURLE_OK) {
-            printf("[API] Token %s: CURL error: %s\n", 
-                    address, curl_easy_strerror(res));
-        } else {
-            long http_code = 0;
-            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-            printf("[API] Token %s: HTTP %ld\n", address, http_code);
-        }
-        fflush(stdout);
     }
     
     curl_slist_free_all(headers);
@@ -196,6 +181,119 @@ static int fetch_token_info(const char *address, token_info_t *info) {
     free(buffer.data);
     
     return ret;
+}
+
+/**
+ * @brief Fetch market cap from GMGN token_mcap_candles API
+ * 
+ * Uses the latest close price from 1s candles as market cap.
+ * Endpoint: /api/v1/token_mcap_candles/sol/{address}
+ */
+static int fetch_market_cap(const char *address, uint64_t *market_cap) {
+    CURL *curl;
+    CURLcode res;
+    curl_buffer_t buffer = {0};
+    char url[1024];
+    struct curl_slist *headers = NULL;
+    int ret = -1;
+    
+    if (!address || !market_cap) {
+        return -1;
+    }
+    
+    *market_cap = 0;
+    
+    /* Build URL for market cap candles - matches browser request format */
+    snprintf(url, sizeof(url), 
+        "%s%s?pool_type=tpool&resolution=1s&limit=5",
+        GMGN_MCAP_CANDLES_API, address);
+    
+    curl = curl_easy_init();
+    if (!curl) {
+        return -1;
+    }
+    
+    buffer.data = malloc(1);
+    buffer.size = 0;
+    
+    setup_curl_common(curl, &buffer, url, &headers);
+    
+    res = curl_easy_perform(curl);
+    
+    if (res == CURLE_OK && buffer.data) {
+        long http_code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+        
+        if (http_code == 200) {
+            cJSON *json = cJSON_Parse(buffer.data);
+            if (json) {
+                cJSON *code = cJSON_GetObjectItemCaseSensitive(json, "code");
+                cJSON *data = cJSON_GetObjectItemCaseSensitive(json, "data");
+                
+                if (code && cJSON_IsNumber(code) && code->valueint == 0 &&
+                    data && cJSON_IsObject(data)) {
+                    
+                    cJSON *list = cJSON_GetObjectItemCaseSensitive(data, "list");
+                    if (list && cJSON_IsArray(list)) {
+                        int count = cJSON_GetArraySize(list);
+                        if (count > 0) {
+                            /* Get the last (most recent) candle */
+                            cJSON *candle = cJSON_GetArrayItem(list, count - 1);
+                            if (candle) {
+                                /* close field contains market cap as string */
+                                cJSON *close = cJSON_GetObjectItemCaseSensitive(candle, "close");
+                                if (close && cJSON_IsString(close)) {
+                                    double mc = atof(close->valuestring);
+                                    /* Store as cents for precision */
+                                    *market_cap = (uint64_t)(mc * 100.0);
+                                    ret = 0;
+                                } else if (close && cJSON_IsNumber(close)) {
+                                    *market_cap = (uint64_t)(close->valuedouble * 100.0);
+                                    ret = 0;
+                                }
+                            }
+                        }
+                    }
+                }
+                cJSON_Delete(json);
+            }
+        }
+    }
+    
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    free(buffer.data);
+    
+    return ret;
+}
+
+/**
+ * @brief Fetch token info from GMGN API (combines KOL and market cap calls)
+ */
+static int fetch_token_info(const char *address, token_info_t *info) {
+    int kol_result, mc_result;
+    
+    if (!address || !info) {
+        return -1;
+    }
+    
+    /* Fetch KOL count */
+    kol_result = fetch_kol_count(address, &info->kol_count);
+    
+    /* Fetch market cap */
+    mc_result = fetch_market_cap(address, &info->market_cap);
+    
+    /* Log results */
+    printf("[API] Token %.8s...: MC=$%.2fK, KOL=%d (mc:%s, kol:%s)\n",
+           address,
+           info->market_cap / 100000.0,  /* Convert cents to thousands */
+           info->kol_count,
+           mc_result == 0 ? "ok" : "fail",
+           kol_result == 0 ? "ok" : "fail");
+    fflush(stdout);
+    
+    /* Consider success if we got at least one piece of data */
+    return (kol_result == 0 || mc_result == 0) ? 0 : -1;
 }
 
 /**
