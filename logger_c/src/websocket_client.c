@@ -568,7 +568,8 @@ int ws_client_connect(ws_client_t *client) {
     if (client->use_ssl) {
         conn_info.ssl_connection = LCCSCF_USE_SSL | 
                                    LCCSCF_ALLOW_SELFSIGNED |
-                                   LCCSCF_SKIP_SERVER_CERT_HOSTNAME_CHECK;
+                                   LCCSCF_SKIP_SERVER_CERT_HOSTNAME_CHECK |
+                                   LCCSCF_ALLOW_INSECURE;
     }
     
     client->state = GMGN_STATE_CONNECTING;
