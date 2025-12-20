@@ -1,0 +1,16 @@
+{
+  "name": "gmgn-network-logger",
+  "version": "1.0.0",
+  "description": "Puppeteer-based network logger for gmgn platform API discovery",
+  "main": "capture.js",
+  "scripts": {
+    "start": "node capture.js",
+    "install-deps": "npm install"
+  },
+  "dependencies": {
+    "puppeteer": "^21.6.1"
+  },
+  "devDependencies": {},
+  "author": "",
+  "license": "ISC"
+}
