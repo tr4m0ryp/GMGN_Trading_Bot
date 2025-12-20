@@ -434,7 +434,8 @@ static void *tracker_thread(void *arg) {
             checked_count++;
 
             /* Fetch updated token info */
-            token_info_t info = {0};
+            token_info_t info;
+            memset(&info, 0, sizeof(info));
             memcpy(info.symbol, t->symbol, sizeof(info.symbol));
             memcpy(info.address, t->address, sizeof(info.address));
             info.age_seconds = age;
@@ -681,7 +682,8 @@ bool tracker_check_token(token_tracker_t *tracker, const char *address) {
         return false;
     }
     
-    token_info_t info = {0};
+    token_info_t info;
+    memset(&info, 0, sizeof(info));
     
     if (fetch_token_info(address, &info) != 0) {
         return false;
