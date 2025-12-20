@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <inttypes.h>
 
 #include <libwebsockets.h>
 
@@ -202,7 +203,7 @@ static void process_message(ws_client_t *client, const char *msg, size_t len) {
             char timestamp[32];
             strftime(timestamp, sizeof(timestamp), "%H:%M:%S", tm_info);
 
-            fprintf(debug_log, "[%s] WS Message #%lu (%zu bytes): %.300s%s\n",
+            fprintf(debug_log, "[%s] WS Message #%" PRIu64 " (%zu bytes): %.300s%s\n",
                     timestamp, client->messages_received, len, msg, len > 300 ? "..." : "");
             fclose(debug_log);
         }
