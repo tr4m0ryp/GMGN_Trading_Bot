@@ -206,7 +206,8 @@ static void on_token_passed(const tracked_token_t *tracked,
     g_tokens_passed++;
     
     /* Create pool data for output */
-    pool_data_t pool = {};
+    pool_data_t pool;
+    memset(&pool, 0, sizeof(pool));
     memcpy(pool.exchange, tracked->exchange, sizeof(pool.exchange));
     memcpy(pool.base_token.symbol, tracked->symbol, sizeof(pool.base_token.symbol));
     memcpy(pool.base_token.address, tracked->address, sizeof(pool.base_token.address));
