@@ -181,18 +181,42 @@ static void process_message(ws_client_t *client, const char *msg, size_t len) {
     if (!client || !msg || len == 0) {
         return;
     }
-    
+
     client->messages_received++;
     client->bytes_received += len;
-    
+
+    /* Debug: log all messages in verbose mode to dedicated debug file */
+    const char *verbose = getenv("GMGN_DEBUG");
+    if (verbose && verbose[0] == '1') {
+        FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
+        if (debug_log) {
+            time_t now = time(NULL);
+            struct tm *tm_info = localtime(&now);
+            char timestamp[32];
+            strftime(timestamp, sizeof(timestamp), "%H:%M:%S", tm_info);
+
+            fprintf(debug_log, "[%s] WS Message #%lu (%zu bytes): %.300s%s\n",
+                    timestamp, client->messages_received, len, msg, len > 300 ? "..." : "");
+            fclose(debug_log);
+        }
+    }
+
     /* Parse message type */
     gmgn_msg_type_t msg_type = json_parse_message_type(msg, len);
-    
+
     switch (msg_type) {
         case GMGN_MSG_NEW_POOL: {
             pool_data_t pools[8];
             int count = json_parse_new_pools(msg, len, pools, 8);
-            
+
+            if (verbose && verbose[0] == '1') {
+                FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
+                if (debug_log) {
+                    fprintf(debug_log, "[DEBUG] Parsed %d pool(s) from NEW_POOL message\n", count);
+                    fclose(debug_log);
+                }
+            }
+
             if (count > 0 && client->pool_callback) {
                 for (int i = 0; i < count; i++) {
                     client->pool_callback(&pools[i], client->pool_callback_data);
@@ -200,19 +224,40 @@ static void process_message(ws_client_t *client, const char *msg, size_t len) {
             }
             break;
         }
-        
+
         case GMGN_MSG_PONG:
             /* Heartbeat response, connection is alive */
+            if (verbose && verbose[0] == '1') {
+                FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
+                if (debug_log) {
+                    fprintf(debug_log, "[DEBUG] Received PONG\n");
+                    fclose(debug_log);
+                }
+            }
             break;
-            
+
         case GMGN_MSG_ERROR:
+            if (verbose && verbose[0] == '1') {
+                FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
+                if (debug_log) {
+                    fprintf(debug_log, "[ERROR] WebSocket error message: %s\n", msg);
+                    fclose(debug_log);
+                }
+            }
             if (client->error_callback) {
                 client->error_callback(-1, msg, client->error_callback_data);
             }
             break;
-            
+
         default:
             /* Unknown or unhandled message type */
+            if (verbose && verbose[0] == '1') {
+                FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
+                if (debug_log) {
+                    fprintf(debug_log, "[DEBUG] Unknown message type, first 200 chars: %.200s\n", msg);
+                    fclose(debug_log);
+                }
+            }
             break;
     }
 }

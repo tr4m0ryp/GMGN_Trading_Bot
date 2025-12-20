@@ -28,11 +28,11 @@ void filter_init_defaults(filter_config_t *filter) {
     memset(filter, 0, sizeof(filter_config_t));
     
     /* Default filters per user requirements:
-     * MC min 5.5K, max 10K; KOL min 1; age max 10 min
+     * MC min 5.5K, max 20K; KOL min 1; age max 10 min
      * Values stored in cents (x100) for precision
      */
     filter->min_market_cap = 550000;      /* $5.5K in cents */
-    filter->max_market_cap = 1000000;     /* $10K in cents */
+    filter->max_market_cap = 2000000;     /* $20K in cents */
     
     /* Liquidity minimum: not specified, use reasonable default */
     filter->min_liquidity = 0;

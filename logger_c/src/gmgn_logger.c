@@ -77,7 +77,7 @@ static void print_usage(const char *program) {
     printf("  -h, --help             Show this help message\n");
     printf("\nFilter options:\n");
     printf("  --min-mc VALUE         Minimum market cap in USD (default: 5500)\n");
-    printf("  --max-mc VALUE         Maximum market cap in USD (default: 10000)\n");
+    printf("  --max-mc VALUE         Maximum market cap in USD (default: 20000)\n");
     printf("  --min-liq VALUE        Minimum liquidity in USD (default: 5000)\n");
     printf("  --min-kol VALUE        Minimum KOL count (default: 1)\n");
     printf("  --max-age VALUE        Maximum token age in minutes (default: 10)\n");
@@ -220,20 +220,47 @@ static void on_token_passed(const tracked_token_t *tracked,
  */
 static void on_new_pool(const pool_data_t *pool, void *user_data) {
     (void)user_data;
-    
+
     if (!pool) {
         return;
     }
-    
+
     g_tokens_seen++;
-    
+
+    /* Debug logging to file */
+    const char *verbose = getenv("GMGN_DEBUG");
+    if (verbose && verbose[0] == '1') {
+        FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
+        if (debug_log) {
+            fprintf(debug_log, "[CALLBACK] Token #%lu seen: %s (MC: $%.2fK, KOL: %u, Ex: %s, Addr: %.20s...)\n",
+                    g_tokens_seen,
+                    pool->base_token.symbol[0] ? pool->base_token.symbol : "???",
+                    pool->base_token.market_cap / 100000.0,
+                    pool->base_token.kol_count,
+                    pool->exchange,
+                    pool->base_token.address);
+            fclose(debug_log);
+        }
+    }
+
     /* Add token to tracker for periodic re-checking */
     if (g_tracker) {
         int result = tracker_add_token(g_tracker, pool);
-        if (result == 0) {
-            /* New token added to tracking */
-        } else if (result == 1) {
-            /* Already tracking */
+        if (verbose && verbose[0] == '1') {
+            FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
+            if (debug_log) {
+                if (result == 0) {
+                    fprintf(debug_log, "[TRACKER] Token added to tracker: %s\n",
+                            pool->base_token.symbol);
+                } else if (result == 1) {
+                    fprintf(debug_log, "[TRACKER] Token already in tracker: %s\n",
+                            pool->base_token.symbol);
+                } else {
+                    fprintf(debug_log, "[TRACKER] Failed to add token to tracker: %s (error %d)\n",
+                            pool->base_token.symbol, result);
+                }
+                fclose(debug_log);
+            }
         }
     }
 }
@@ -326,7 +353,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     
-    output_print_info("Token tracker started (checking every 5s for up to 10 min)");
+    output_print_info("Token tracker started (checking every 0.5s for up to 10 min)");
     
     /* Create WebSocket client */
     g_client = ws_client_create(config.websocket_url, 

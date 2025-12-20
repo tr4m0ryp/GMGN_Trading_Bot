@@ -21,7 +21,7 @@
 
 /* Configuration */
 #define TRACKER_MAX_TOKENS      256     /* Maximum tracked tokens */
-#define TRACKER_CHECK_INTERVAL  5       /* Seconds between API checks */
+#define TRACKER_CHECK_INTERVAL  500     /* Milliseconds between API checks */
 #define TRACKER_API_TIMEOUT     10      /* API request timeout seconds */
 
 /**
@@ -42,9 +42,10 @@ typedef struct {
     char symbol[GMGN_MAX_SYMBOL_LEN];       /* Token symbol */
     char exchange[GMGN_MAX_EXCHANGE_LEN];   /* Exchange/launchpad */
     time_t discovered_at;                    /* When we first saw it */
-    time_t last_check;                       /* Last API check time */
+    uint64_t last_check_ms;                  /* Last API check (milliseconds) */
     uint64_t last_market_cap;                /* Last known MC (cents) */
     uint8_t last_kol_count;                  /* Last known KOL count */
+    uint8_t peak_kol_count;                  /* Highest KOL count ever seen */
     uint32_t check_count;                    /* Number of checks performed */
     token_state_t state;                     /* Current state */
 } tracked_token_t;
