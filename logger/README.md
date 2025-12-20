@@ -1,6 +1,6 @@
 # gmgn Network Logger
 
-Puppeteer-based tool for capturing network traffic from gmgn.ai platform to analyze API endpoints and data structures.
+Playwright-based tool for capturing network traffic from gmgn.ai platform to analyze API endpoints and data structures. Uses Firefox browser for better stability.
 
 ## Purpose
 
@@ -28,16 +28,26 @@ node capture.js 10
 
 ## How It Works
 
-1. Opens a Chrome browser window (non-headless)
+1. Opens a Firefox browser window (non-headless)
 2. Navigates to gmgn.ai
-3. **You manually set up your filters** in the browser
-4. Captures all network traffic in the background
-5. After the specified duration, saves logs to `./logs/` directory
+3. **WAITS 30 SECONDS** - Complete Cloudflare verification during this time
+4. Network logging starts automatically after 30 seconds
+5. Navigate to trenches and **manually set up your filters**
+6. Captures all network traffic in the background
+7. After the specified duration, saves logs to `./logs/` directory
 
 ## Output Files
 
 - `network_capture_TIMESTAMP.json` - Full network log with requests/responses
 - `endpoints_summary_TIMESTAMP.txt` - List of unique API endpoints discovered
+
+## Cloudflare Issues?
+
+If you cannot bypass Cloudflare verification with the automated script, see **MANUAL_CAPTURE.md** for an alternative method using your browser's built-in DevTools. This method:
+- Works with any browser (no automation detection)
+- Bypasses all Cloudflare protections
+- Produces the same output format
+- Gives you full control
 
 ## Next Steps
 

@@ -1,14 +1,14 @@
 {
   "name": "gmgn-network-logger",
   "version": "1.0.0",
-  "description": "Puppeteer-based network logger for gmgn platform API discovery",
+  "description": "Playwright-based network logger for gmgn platform API discovery",
   "main": "capture.js",
   "scripts": {
     "start": "node capture.js",
-    "install-deps": "npm install"
+    "install-deps": "npm install && npx playwright install firefox"
   },
   "dependencies": {
-    "puppeteer": "^21.6.1"
+    "playwright": "^1.40.1"
   },
   "devDependencies": {},
   "author": "",
