@@ -153,9 +153,6 @@ static int queue_message(ws_client_t *client, const char *msg, size_t len) {
         return -1;
     }
     
-    printf("[WS DEBUG] queue_message: len=%zu, wsi=%p, msg: %.*s\n", 
-           len, (void*)client->wsi, (int)len, msg);
-    
     /* Allocate with LWS_PRE padding */
     char *buf = malloc(LWS_PRE + len + 1);
     if (!buf) {
@@ -171,10 +168,7 @@ static int queue_message(ws_client_t *client, const char *msg, size_t len) {
     
     /* Request write callback */
     if (client->wsi) {
-        printf("[WS DEBUG] Requesting writable callback on wsi=%p\n", (void*)client->wsi);
         lws_callback_on_writable(client->wsi);
-    } else {
-        printf("[WS DEBUG] WARNING: client->wsi is NULL, cannot request writable\n");
     }
     
     return 0;
@@ -241,7 +235,6 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
     
     switch (reason) {
         case LWS_CALLBACK_CLIENT_ESTABLISHED:
-            printf("[WS DEBUG] Connection established!\n");
             if (client) {
                 client->state = GMGN_STATE_CONNECTED;
                 client->connected_at = time(NULL);
@@ -262,11 +255,6 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
                 /* Check if message is complete */
                 if (lws_is_final_fragment(wsi)) {
                     client->rx_buffer[client->rx_buffer_len] = '\0';
-                    /* DEBUG: Print raw message */
-                    printf("[WS DEBUG] Received %zu bytes: %.200s%s\n", 
-                           client->rx_buffer_len, 
-                           client->rx_buffer,
-                           client->rx_buffer_len > 200 ? "..." : "");
                     process_message(client, client->rx_buffer, client->rx_buffer_len);
                     client->rx_buffer_len = 0;
                 }
@@ -274,37 +262,17 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
             break;
             
         case LWS_CALLBACK_CLIENT_WRITEABLE: {
-            size_t pending_count = client ? client->pending_msg_count : 0;
-            printf("[WS DEBUG] WRITEABLE callback, client=%p, pending=%zu, pending_msgs[0]=%p\n", 
-                   (void*)client, pending_count, 
-                   (client && pending_count > 0) ? (void*)client->pending_msgs[0] : NULL);
             if (client && client->pending_msg_count > 0) {
-                printf("[WS DEBUG] Entering send block, pending_msg_count=%d\n", client->pending_msg_count);
                 /* Send first pending message */
                 char *buf = client->pending_msgs[0];
                 size_t msg_len = client->pending_msg_lens[0];
                 
-                printf("[WS DEBUG] About to send buf=%p, len=%zu\n", (void*)buf, msg_len);
-                fflush(stdout);
-                
                 int written = lws_write(wsi, (unsigned char *)(buf + LWS_PRE),
                                         msg_len, LWS_WRITE_TEXT);
                 
-                /* DEBUG: Print what we're sending */
-                printf("[WS DEBUG] lws_write returned %d (expected %zu)\n", written, msg_len);
-                fflush(stdout);
-                
-                if (written < 0) {
-                    printf("[WS DEBUG] lws_write FAILED with %d\n", written);
+                if (written < 0 || (size_t)written < msg_len) {
                     return -1;
                 }
-                if ((size_t)written < msg_len) {
-                    printf("[WS DEBUG] lws_write partial write: %d < %zu\n", written, msg_len);
-                    return -1;
-                }
-                
-                printf("[WS DEBUG] Message sent successfully: %.*s\n", (int)msg_len, buf + LWS_PRE);
-                fflush(stdout);
                 
                 /* Remove from queue */
                 free(buf);
@@ -323,7 +291,6 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
         }
             
         case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-            printf("[WS DEBUG] Connection ERROR: %s\n", in ? (const char *)in : "(no details)");
             if (client) {
                 client->state = GMGN_STATE_ERROR;
                 client->wsi = NULL;
@@ -336,7 +303,6 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
             break;
             
         case LWS_CALLBACK_CLIENT_CLOSED:
-            printf("[WS DEBUG] Connection closed\n");
             if (client) {
                 client->state = GMGN_STATE_DISCONNECTED;
                 client->wsi = NULL;

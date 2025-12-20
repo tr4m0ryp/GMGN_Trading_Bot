@@ -27,26 +27,29 @@ void filter_init_defaults(filter_config_t *filter) {
     
     memset(filter, 0, sizeof(filter_config_t));
     
-    /* DISABLED FOR TESTING - Set very permissive values */
-    filter->min_market_cap = 0;           /* No minimum */
-    filter->max_market_cap = UINT64_MAX;  /* No maximum */
+    /* Default filters per user requirements:
+     * MC min 5.5K, max 10K; KOL min 1; age max 10 min
+     * Values stored in cents (x100) for precision
+     */
+    filter->min_market_cap = 550000;      /* $5.5K in cents */
+    filter->max_market_cap = 1000000;     /* $10K in cents */
     
-    /* Liquidity minimum: disabled */
+    /* Liquidity minimum: not specified, use reasonable default */
     filter->min_liquidity = 0;
     
-    /* Volume minimum: disabled */
+    /* Volume minimum: not specified */
     filter->min_volume_24h = 0;
     
-    /* Holder requirements: disabled */
+    /* Holder requirements: not specified */
     filter->min_holder_count = 0;
-    filter->max_top_10_ratio = 10000;     /* 100% */
-    filter->max_creator_ratio = 10000;    /* 100% */
+    filter->max_top_10_ratio = 10000;     /* 100% (no limit) */
+    filter->max_creator_ratio = 10000;    /* 100% (no limit) */
     
-    /* Token age: disabled (very large) */
-    filter->max_age_seconds = 86400 * 365; /* 1 year */
+    /* Token age: max 10 minutes */
+    filter->max_age_seconds = 10 * 60;    /* 10 minutes in seconds */
     
-    /* KOL minimum: disabled */
-    filter->min_kol_count = 0;
+    /* KOL minimum: 1 */
+    filter->min_kol_count = 1;
     
     /* No exchange filtering */
     /* No excluded symbols */

@@ -196,7 +196,6 @@ static void init_config(app_config_t *config) {
  */
 static void on_new_pool(const pool_data_t *pool, void *user_data) {
     filter_config_t *filter = (filter_config_t *)user_data;
-    (void)filter;  /* Temporarily unused - filters disabled for testing */
     
     if (!pool) {
         return;
@@ -204,21 +203,11 @@ static void on_new_pool(const pool_data_t *pool, void *user_data) {
     
     g_tokens_seen++;
     
-    /* DEBUG: Print raw pool data without filtering */
-    printf("[DEBUG] Received pool: %s (%s)\n", 
-           pool->base_token.symbol, pool->base_token.name);
-    printf("[DEBUG]   MC: $%lu, Holders: %d, KOL: %d\n",
-           (unsigned long)pool->base_token.market_cap, 
-           pool->base_token.holder_count,
-           pool->base_token.kol_count);
-    
-    /* TEMPORARILY DISABLED: Apply filters */
-    /*
+    /* Apply filters */
     if (filter && !filter_check_pool(pool, filter)) {
-        output_log_filtered(&pool->base_token, "Did not pass filters");
+        /* Token filtered out - don't log unless in verbose mode */
         return;
     }
-    */
     
     g_tokens_passed++;
     
