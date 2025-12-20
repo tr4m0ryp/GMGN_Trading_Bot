@@ -207,8 +207,8 @@ static void on_new_pool(const pool_data_t *pool, void *user_data) {
     /* DEBUG: Print raw pool data without filtering */
     printf("[DEBUG] Received pool: %s (%s)\n", 
            pool->base_token.symbol, pool->base_token.name);
-    printf("[DEBUG]   MC: $%.2f, Holders: %d, KOL: %d\n",
-           pool->base_token.market_cap, 
+    printf("[DEBUG]   MC: $%lu, Holders: %d, KOL: %d\n",
+           (unsigned long)pool->base_token.market_cap, 
            pool->base_token.holder_count,
            pool->base_token.kol_count);
     
@@ -260,6 +260,9 @@ int main(int argc, char *argv[]) {
     time_t last_ping = 0;
     time_t last_stats = 0;
     gmgn_conn_state_t last_state = GMGN_STATE_DISCONNECTED;
+    
+    /* Make stdout line-buffered for immediate debug output */
+    setvbuf(stdout, NULL, _IOLBF, 0);
     
     /* Initialize configuration */
     init_config(&config);

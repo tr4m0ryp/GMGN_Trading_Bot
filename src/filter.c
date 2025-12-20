@@ -15,6 +15,8 @@
 #include <string.h>
 #include <strings.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <limits.h>
 
 #include "filter.h"
 
@@ -25,37 +27,29 @@ void filter_init_defaults(filter_config_t *filter) {
     
     memset(filter, 0, sizeof(filter_config_t));
     
-    /* Market cap range: $5.5K - $10K (in cents) */
-    filter->min_market_cap = 550000;      /* $5,500 */
-    filter->max_market_cap = 1000000;     /* $10,000 */
+    /* DISABLED FOR TESTING - Set very permissive values */
+    filter->min_market_cap = 0;           /* No minimum */
+    filter->max_market_cap = UINT64_MAX;  /* No maximum */
     
-    /* Liquidity minimum: $5K */
-    filter->min_liquidity = 500000;       /* $5,000 */
+    /* Liquidity minimum: disabled */
+    filter->min_liquidity = 0;
     
-    /* Volume minimum: $1K */
-    filter->min_volume_24h = 100000;      /* $1,000 */
+    /* Volume minimum: disabled */
+    filter->min_volume_24h = 0;
     
-    /* Holder requirements */
-    filter->min_holder_count = 10;
-    filter->max_top_10_ratio = 7000;      /* 70% */
-    filter->max_creator_ratio = 5000;     /* 50% */
+    /* Holder requirements: disabled */
+    filter->min_holder_count = 0;
+    filter->max_top_10_ratio = 10000;     /* 100% */
+    filter->max_creator_ratio = 10000;    /* 100% */
     
-    /* Token age: max 10 minutes */
-    filter->max_age_seconds = 600;
+    /* Token age: disabled (very large) */
+    filter->max_age_seconds = 86400 * 365; /* 1 year */
     
-    /* KOL minimum */
-    filter->min_kol_count = 1;
+    /* KOL minimum: disabled */
+    filter->min_kol_count = 0;
     
-    /* Default trusted exchanges */
-    filter_add_exchange(filter, "raydium");
-    filter_add_exchange(filter, "orca");
-    filter_add_exchange(filter, "meteora");
-    
-    /* Default excluded symbols */
-    filter_add_exclude_symbol(filter, "SCAM");
-    filter_add_exclude_symbol(filter, "TEST");
-    filter_add_exclude_symbol(filter, "FAKE");
-    filter_add_exclude_symbol(filter, "RUG");
+    /* No exchange filtering */
+    /* No excluded symbols */
 }
 
 bool filter_check_market_cap(uint64_t market_cap, const filter_config_t *filter) {

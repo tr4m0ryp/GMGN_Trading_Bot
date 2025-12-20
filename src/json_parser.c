@@ -198,16 +198,19 @@ gmgn_msg_type_t json_parse_message_type(const char *json_str, size_t json_len) {
     if (cJSON_IsString(channel)) {
         const char *ch = channel->valuestring;
         
-        if (strcmp(ch, "new_pools") == 0) {
+        if (strcmp(ch, "new_pool_info") == 0) {
             type = GMGN_MSG_NEW_POOL;
-        } else if (strcmp(ch, "pair_update") == 0) {
+        } else if (strcmp(ch, "new_pair_update") == 0) {
             type = GMGN_MSG_PAIR_UPDATE;
-        } else if (strcmp(ch, "token_launch") == 0) {
+        } else if (strcmp(ch, "new_launched_info") == 0) {
             type = GMGN_MSG_TOKEN_LAUNCH;
-        } else if (strcmp(ch, "chain_stats") == 0) {
+        } else if (strcmp(ch, "chain_stat") == 0) {
             type = GMGN_MSG_CHAIN_STATS;
-        } else if (strcmp(ch, "wallet_trades") == 0) {
+        } else if (strcmp(ch, "wallet_trade_data") == 0) {
             type = GMGN_MSG_WALLET_TRADE;
+        } else if (strcmp(ch, "ack") == 0) {
+            /* Acknowledgment message, ignore */
+            type = GMGN_MSG_UNKNOWN;
         }
     }
     
@@ -250,16 +253,36 @@ int json_parse_new_pools(const char *json_str, size_t json_len,
     
     int count = 0;
     
-    /* Look for pools array: "p" or "pools" or "data.p" */
-    const cJSON *pools_arr = cJSON_GetObjectItemCaseSensitive(json, "p");
-    if (!pools_arr) {
-        pools_arr = cJSON_GetObjectItemCaseSensitive(json, "pools");
-    }
-    if (!pools_arr) {
-        const cJSON *data = cJSON_GetObjectItemCaseSensitive(json, "data");
-        if (data) {
-            pools_arr = cJSON_GetObjectItemCaseSensitive(data, "p");
+    /* Look for pools array in GMGN format:
+     * {"channel":"new_pool_info","data":[{"c":"sol","p":[...]}]}
+     * data is an array of objects, each with "p" pools array
+     */
+    const cJSON *data = cJSON_GetObjectItemCaseSensitive(json, "data");
+    const cJSON *pools_arr = NULL;
+    const char *chain_str = NULL;
+    
+    if (cJSON_IsArray(data)) {
+        /* data is array: [{"c":"sol","p":[...]}] - take first element */
+        const cJSON *first_data = cJSON_GetArrayItem(data, 0);
+        if (first_data) {
+            pools_arr = cJSON_GetObjectItemCaseSensitive(first_data, "p");
+            const cJSON *chain_obj = cJSON_GetObjectItemCaseSensitive(first_data, "c");
+            if (cJSON_IsString(chain_obj)) {
+                chain_str = chain_obj->valuestring;
+            }
         }
+    } else if (cJSON_IsObject(data)) {
+        /* data is object: {"c":"sol","p":[...]} */
+        pools_arr = cJSON_GetObjectItemCaseSensitive(data, "p");
+        const cJSON *chain_obj = cJSON_GetObjectItemCaseSensitive(data, "c");
+        if (cJSON_IsString(chain_obj)) {
+            chain_str = chain_obj->valuestring;
+        }
+    }
+    
+    /* Fallback: look for "p" at top level */
+    if (!pools_arr) {
+        pools_arr = cJSON_GetObjectItemCaseSensitive(json, "p");
     }
     
     if (cJSON_IsArray(pools_arr)) {
@@ -270,9 +293,12 @@ int json_parse_new_pools(const char *json_str, size_t json_len,
             }
             
             if (parse_pool_obj(pool_json, &pools[count]) == 0) {
-                /* Get chain from parent message */
-                json_get_string(json, "c", pools[count].chain, 
-                               sizeof(pools[count].chain));
+                /* Set chain from parent message */
+                if (chain_str) {
+                    strncpy(pools[count].chain, chain_str, 
+                            sizeof(pools[count].chain) - 1);
+                    pools[count].chain[sizeof(pools[count].chain) - 1] = '\0';
+                }
                 count++;
             }
         }
@@ -330,7 +356,16 @@ int json_create_subscribe_msg(const char *channel, const char *chain,
         return -1;
     }
     
+    /* Required subscription fields per GMGN API */
+    cJSON_AddStringToObject(msg, "action", "subscribe");
     cJSON_AddStringToObject(msg, "channel", channel);
+    cJSON_AddStringToObject(msg, "f", "w");
+    
+    /* Generate a simple unique ID */
+    static int msg_counter = 0;
+    char id_buf[32];
+    snprintf(id_buf, sizeof(id_buf), "gmgn_%08x", ++msg_counter);
+    cJSON_AddStringToObject(msg, "id", id_buf);
     
     /* Create data array with chain object: [{"chain": "sol"}] */
     if (chain) {
