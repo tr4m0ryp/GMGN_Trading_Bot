@@ -37,7 +37,7 @@
 #define VERSION_PATCH   0
 
 /* Default configuration */
-#define DEFAULT_WS_URL          "wss://gmgn.ai/ws"
+#define DEFAULT_WS_URL          "wss://ws.gmgn.ai/quotation"
 #define DEFAULT_CHAIN           "sol"
 #define DEFAULT_HEARTBEAT_MS    30000
 #define DEFAULT_RECONNECT_MS    1000
@@ -321,9 +321,9 @@ int main(int argc, char *argv[]) {
             
             /* Subscribe when connected */
             if (state == GMGN_STATE_CONNECTED && last_state == GMGN_STATE_CONNECTING) {
-                output_print_info("Subscribing to new_pools channel...");
+                output_print_info("Subscribing to new_pool_info channel...");
                 
-                if (ws_client_subscribe(g_client, "new_pools", config.chain) != 0) {
+                if (ws_client_subscribe(g_client, "new_pool_info", config.chain) != 0) {
                     output_print_error(-1, "Failed to subscribe to channel");
                 }
             }

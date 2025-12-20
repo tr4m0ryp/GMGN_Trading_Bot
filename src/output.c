@@ -5,7 +5,7 @@
  * Provides formatted terminal output with ANSI color codes for
  * displaying token information, connection status, and statistics.
  *
- * Dependencies: "output.h", "gmgn_types.h"
+ * Dependencies: "output.h", "gmgn_types.h", "filter.h"
  *
  * @date 2025-12-20
  */
@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "output.h"
+#include "filter.h"
 
 /* ANSI color codes */
 #define ANSI_RESET      "\033[0m"

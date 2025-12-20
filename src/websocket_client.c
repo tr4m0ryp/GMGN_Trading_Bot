@@ -126,15 +126,20 @@ static int parse_url(const char *url, char *host, size_t host_size,
         return -1;
     }
     
-    strncpy(host, p, host_len);
+    memcpy(host, p, host_len);
     host[host_len] = '\0';
     
     /* Extract path */
     if (path_start) {
-        strncpy(path, path_start, path_size - 1);
-        path[path_size - 1] = '\0';
+        size_t path_len = strlen(path_start);
+        if (path_len >= path_size) {
+            path_len = path_size - 1;
+        }
+        memcpy(path, path_start, path_len);
+        path[path_len] = '\0';
     } else {
-        strncpy(path, "/", path_size);
+        path[0] = '/';
+        path[1] = '\0';
     }
     
     return 0;
@@ -217,8 +222,16 @@ static void process_message(ws_client_t *client, const char *msg, size_t len) {
  */
 static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
                        void *user, void *in, size_t len) {
-    ws_client_t **pclient = (ws_client_t **)user;
-    ws_client_t *client = pclient ? *pclient : NULL;
+    /* Get client from user data directly */
+    ws_client_t *client = (ws_client_t *)user;
+    
+    /* Also try to get from context if user is NULL */
+    if (!client && wsi) {
+        struct lws_context *ctx = lws_get_context(wsi);
+        if (ctx) {
+            client = (ws_client_t *)lws_context_user(ctx);
+        }
+    }
     
     switch (reason) {
         case LWS_CALLBACK_CLIENT_ESTABLISHED:
@@ -295,6 +308,24 @@ static int ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
             }
             break;
             
+        case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER: {
+            /* Add custom headers for GMGN compatibility */
+            unsigned char **p = (unsigned char **)in;
+            unsigned char *end = (*p) + len;
+            
+            /* Add User-Agent header */
+            const char *ua = "User-Agent: Mozilla/5.0 (X11; Linux x86_64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/120.0.0.0 Safari/537.36\r\n";
+            size_t ua_len = strlen(ua);
+            
+            if (end - (*p) >= (long)ua_len) {
+                memcpy(*p, ua, ua_len);
+                *p += ua_len;
+            }
+            break;
+        }
+            
         default:
             break;
     }
@@ -313,12 +344,38 @@ ws_client_t *ws_client_create(const char *url, const char *access_token) {
     }
     
     /* Parse URL */
+    char base_path[128];
     if (parse_url(url, client->host, sizeof(client->host),
-                  &client->port, client->path, sizeof(client->path),
+                  &client->port, base_path, sizeof(base_path),
                   &client->use_ssl) != 0) {
         free(client);
         return NULL;
     }
+    
+    /* Generate random device/client IDs */
+    char device_id[37];
+    char client_id[24];
+    char fp_did[33];
+    char uuid_str[33];
+    
+    /* Simple random hex generator for IDs */
+    srand((unsigned int)time(NULL));
+    snprintf(device_id, sizeof(device_id), 
+             "%08x-%04x-%04x-%04x-%08x%04x",
+             rand(), rand() & 0xffff, rand() & 0xffff, 
+             rand() & 0xffff, rand(), rand() & 0xffff);
+    snprintf(client_id, sizeof(client_id), "gmgn_c_%08x", rand());
+    snprintf(fp_did, sizeof(fp_did), "%08x%08x%08x%08x", 
+             rand(), rand(), rand(), rand());
+    snprintf(uuid_str, sizeof(uuid_str), "%08x%08x%08x%08x",
+             rand(), rand(), rand(), rand());
+    
+    /* Build path with query parameters */
+    snprintf(client->path, sizeof(client->path),
+             "%s?device_id=%s&client_id=%s&from_app=gmgn"
+             "&app_ver=20250729-1647-ffac485&tz_name=UTC&tz_offset=0"
+             "&app_lang=en-US&fp_did=%s&os=linux&uuid=%s",
+             base_path, device_id, client_id, fp_did, uuid_str);
     
     strncpy(client->url, url, sizeof(client->url) - 1);
     
@@ -372,7 +429,7 @@ int ws_client_connect(ws_client_t *client) {
         info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
         info.user = client;
         
-        client->context = lws_context_create(&info);
+        client->context = lws_create_context(&info);
         if (!client->context) {
             return -1;
         }
@@ -382,14 +439,18 @@ int ws_client_connect(ws_client_t *client) {
     struct lws_client_connect_info conn_info;
     memset(&conn_info, 0, sizeof(conn_info));
     
+    /* Build origin URL */
+    char origin_url[256];
+    snprintf(origin_url, sizeof(origin_url), "https://%s", client->host);
+    
     conn_info.context = client->context;
     conn_info.address = client->host;
     conn_info.port = client->port;
     conn_info.path = client->path;
     conn_info.host = client->host;
-    conn_info.origin = client->host;
+    conn_info.origin = origin_url;
     conn_info.protocol = s_protocols[0].name;
-    conn_info.userdata = &client;
+    conn_info.userdata = client;  /* Pass client directly */
     
     if (client->use_ssl) {
         conn_info.ssl_connection = LCCSCF_USE_SSL | 

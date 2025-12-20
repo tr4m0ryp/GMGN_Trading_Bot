@@ -172,8 +172,9 @@ static int parse_pool_obj(const cJSON *pool_json, pool_data_t *pool) {
         
         /* Copy token address if not set */
         if (pool->base_token.address[0] == '\0' && pool->base_token_addr[0] != '\0') {
-            strncpy(pool->base_token.address, pool->base_token_addr, 
-                    sizeof(pool->base_token.address) - 1);
+            size_t addr_len = sizeof(pool->base_token.address) - 1;
+            memcpy(pool->base_token.address, pool->base_token_addr, addr_len);
+            pool->base_token.address[addr_len] = '\0';
         }
     }
     
@@ -329,11 +330,19 @@ int json_create_subscribe_msg(const char *channel, const char *chain,
         return -1;
     }
     
-    cJSON_AddStringToObject(msg, "action", "subscribe");
     cJSON_AddStringToObject(msg, "channel", channel);
     
+    /* Create data array with chain object: [{"chain": "sol"}] */
     if (chain) {
-        cJSON_AddStringToObject(msg, "chain", chain);
+        cJSON *data_array = cJSON_CreateArray();
+        if (data_array) {
+            cJSON *chain_obj = cJSON_CreateObject();
+            if (chain_obj) {
+                cJSON_AddStringToObject(chain_obj, "chain", chain);
+                cJSON_AddItemToArray(data_array, chain_obj);
+            }
+            cJSON_AddItemToObject(msg, "data", data_array);
+        }
     }
     
     char *json_str = cJSON_PrintUnformatted(msg);

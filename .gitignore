@@ -1,0 +1,44 @@
+# Build artifacts
+/build/
+*.o
+*.a
+*.so
+*.dylib
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+
+# Dependency files
+*.d
+
+# Compiled binary (if not in build/)
+gmgn_logger
+
+# Configuration with secrets
+config/gmgn_logger.local.conf
+*.secret
+*.key
+
+# Core dumps
+core
+core.*
