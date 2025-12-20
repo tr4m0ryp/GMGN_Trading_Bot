@@ -24,7 +24,7 @@ const CONFIG = {
     duration: parseInt(process.argv[2]) || 5,
     headless: false,
     logsDir: path.join(__dirname, 'logs'),
-    startDelay: 30
+    startDelay: 0
 };
 
 const networkLogs = [];

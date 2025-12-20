@@ -1,4 +1,4 @@
 node_modules/
-logs/*.json
-logs/*.txt
+# logs/*.json
+# logs/*.txt
 package-lock.json
