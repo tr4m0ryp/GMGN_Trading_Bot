@@ -4,28 +4,141 @@
 
 This project focuses on **C programming** as the primary language due to its superior performance for computational operations. C provides the fastest execution speed for calculation-intensive tasks, making it ideal for trading algorithms and financial computations.
 
-## Project Structure
+## Project Overview
 
-The project follows a standard organized C project structure:
+This is a **GMGN Trading Bot** project with multiple components:
+
+1. **logger_c/** - Real-time token logger that connects to GMGN.ai WebSocket API
+2. **trading_algorithm/** - (Future) Mathematical trading algorithm based on logger analysis
+3. **logger/** - (Legacy) JavaScript-based network capture utilities
+
+## Project Structure
 
 ```
 gmgn_trading/
-├── src/           # Source files (.c)
-├── include/       # Header files (.h)
-├── build/         # Compiled binaries and object files
-├── lib/           # External libraries
-├── tests/         # Test files
-├── scripts/       # Build and utility scripts
-└── docs/          # Documentation (minimal, avoid creating unless necessary)
+├── CLAUDE.md              # This file - development guidelines
+├── README.md              # Project overview
+├── config/                # Configuration files
+├── logger_c/              # C-based real-time token logger
+│   ├── src/               # Source files (.c)
+│   ├── include/           # Header files (.h)
+│   ├── build/             # Compiled binaries
+│   └── Makefile           # Build configuration
+├── trading_algorithm/     # (Future) Trading algorithm component
+├── data_analysis/         # (Future) Token analysis and ML models
+└── logger/                # Legacy JS network capture tools
 ```
 
-### Directory Guidelines
-- **src/**: All implementation files (.c) go here
-- **include/**: All header files (.h) go here
-- **build/**: Output directory for compiled artifacts (do not commit to git)
-- **lib/**: Third-party libraries and dependencies
-- **tests/**: Unit tests and integration tests
-- **scripts/**: Makefile, build scripts, deployment scripts
+### Component Directories
+
+- **logger_c/**: The C-based GMGN token logger - connects to WebSocket, filters tokens
+- **trading_algorithm/**: (Future) Trading decision engine using mathematical models
+- **data_analysis/**: (Future) Historical data analysis and pattern recognition
+
+---
+
+## GMGN WebSocket API - Lessons Learned
+
+### Critical Information for Future Development
+
+This section documents issues encountered and solutions found when working with the GMGN.ai WebSocket API.
+
+### 1. WebSocket Connection URL and Parameters
+
+**Correct WebSocket URL:**
+```
+wss://ws.gmgn.ai/quotation
+```
+
+**Required Query Parameters:**
+```
+device_id, client_id, from_app, app_ver, tz_name, tz_offset, app_lang, fp_did, os, uuid
+```
+
+Example path:
+```
+/quotation?device_id=xxx&client_id=gmgn_python_xxx&from_app=gmgn&app_ver=20250729-1647-ffac485&tz_name=UTC&tz_offset=0&app_lang=en-US&fp_did=xxx&os=linux&uuid=xxx
+```
+
+### 2. Subscription Message Format (CRITICAL)
+
+**WRONG format (will not receive data):**
+```json
+{"channel":"new_pool_info","data":[{"chain":"sol"}]}
+```
+
+**CORRECT format (required fields):**
+```json
+{
+  "action": "subscribe",
+  "channel": "new_pool_info",
+  "f": "w",
+  "id": "gmgn_00000001",
+  "data": [{"chain": "sol"}]
+}
+```
+
+Required fields:
+- `action`: Must be `"subscribe"`
+- `channel`: Channel name (e.g., `"new_pool_info"`)
+- `f`: Must be `"w"` (unknown purpose, but required)
+- `id`: Unique message ID for acknowledgment tracking
+- `data`: Array with chain specification
+
+### 3. Channel Names
+
+| Description | Correct Channel Name |
+|-------------|---------------------|
+| New pools | `new_pool_info` |
+| Pair updates | `new_pair_update` |
+| Token launches | `new_launched_info` |
+| Chain stats | `chain_stat` |
+| Wallet trades | `wallet_trade_data` |
+
+### 4. Data Structure for new_pool_info
+
+The response structure:
+```json
+{
+  "channel": "new_pool_info",
+  "data": [
+    {
+      "c": "sol",
+      "rg": "3",
+      "p": [
+        {
+          "a": "pool_address",
+          "ex": "pump",
+          "ba": "base_token_address",
+          "bti": {
+            "s": "SYMBOL",
+            "n": "Token Name",
+            "mc": 379140
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Key insight:** The `data` field is an **array**, not an object. Access pools via `data[0].p`.
+
+### 5. Required HTTP Headers
+
+```
+Origin: https://gmgn.ai
+User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36
+```
+
+### 6. libwebsockets Specifics (C Implementation)
+
+- Use `lws_create_context()` not `lws_context_create()` (API renamed in v4.x)
+- Set `pt_serv_buf_size = 8192` or higher for long query strings
+- Pass `client` pointer directly to `userdata`, not `&client` (stack address issue)
+- Use `LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER` to add custom headers
+
+---
 
 ## Code Quality Standards
 
