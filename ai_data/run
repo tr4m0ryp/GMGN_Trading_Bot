@@ -1,0 +1,60 @@
+#!/bin/bash
+#
+# AI Data Collector - Run Script
+#
+# This script runs the AI data collector with proper environment setup.
+# It ensures Cloudflare session cookies are configured for API access.
+#
+# Usage:
+#   ./run                    - Run with default settings
+#   ./run -v                 - Run with verbose output
+#   ./run --data-dir /path   - Custom data directory
+#
+# Prerequisites:
+#   - Build with 'make' first
+#   - Set environment variables for Cloudflare cookies (optional but recommended)
+#
+# @date 2025-12-20
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BINARY="$SCRIPT_DIR/build/ai_data_logger"
+DATA_DIR="$SCRIPT_DIR/data"
+
+# Check if binary exists
+if [ ! -f "$BINARY" ]; then
+    echo "Error: Binary not found at $BINARY"
+    echo "Please run 'make' first."
+    echo ""
+    echo "Build steps:"
+    echo "  cd ../logger_c && make"
+    echo "  cd ../ai_data && make"
+    exit 1
+fi
+
+# Create data directory if needed
+mkdir -p "$DATA_DIR"
+
+# Load environment from config if exists
+CONFIG_FILE="$SCRIPT_DIR/../config/gmgn_cookies.env"
+if [ -f "$CONFIG_FILE" ]; then
+    echo "Loading cookies from $CONFIG_FILE"
+    source "$CONFIG_FILE"
+fi
+
+# Check for Cloudflare cookies (warn if missing)
+if [ -z "$GMGN_CF_CLEARANCE" ]; then
+    echo "Warning: GMGN_CF_CLEARANCE not set - API calls may fail"
+    echo "Set Cloudflare cookies for reliable API access:"
+    echo "  export GMGN_CF_CLEARANCE='your_cookie_value'"
+    echo "  export GMGN_CF_BM='your_cookie_value'"
+    echo ""
+fi
+
+# Run with passed arguments, default to data directory
+echo "Starting AI Data Collector..."
+echo "Data directory: $DATA_DIR"
+echo ""
+
+exec "$BINARY" --data-dir "$DATA_DIR" "$@"
