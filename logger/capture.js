@@ -77,7 +77,7 @@ function saveLogs() {
  * Main capture function
  */
 async function captureNetworkTraffic() {
-    console.log('[START] gmgn Network Logger (Firefox)');
+    console.log('[START] gmgn Network Logger (Chrome)');
     console.log(`[CONFIG] URL: ${CONFIG.url}`);
     console.log(`[CONFIG] Duration: ${CONFIG.duration} minutes`);
     console.log(`[CONFIG] Start delay: ${CONFIG.startDelay} seconds`);
@@ -152,7 +152,7 @@ async function captureNetworkTraffic() {
     await page.goto(CONFIG.url, { waitUntil: 'load' }).catch(() => {});
 
     console.log('\n========================================');
-    console.log('FIREFOX BROWSER IS NOW OPEN');
+    console.log('CHROME BROWSER IS NOW OPEN');
     console.log('');
     console.log('COMPLETE CLOUDFLARE VERIFICATION NOW');
     console.log('You have 30 seconds before logging starts');

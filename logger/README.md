@@ -28,7 +28,7 @@ node capture.js 10
 
 ## How It Works
 
-1. Opens a Firefox browser window (non-headless)
+1. Opens a Chrome browser window (non-headless) with anti-detection settings
 2. Navigates to gmgn.ai
 3. **WAITS 30 SECONDS** - Complete Cloudflare verification during this time
 4. Network logging starts automatically after 30 seconds
