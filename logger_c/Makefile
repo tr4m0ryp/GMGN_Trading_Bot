@@ -8,6 +8,7 @@
 #   make clean    - Remove build artifacts
 #   make install  - Install to /usr/local/bin
 #   make deps     - Install system dependencies (Ubuntu/Debian)
+#   make deps-mac - Install system dependencies (macOS via Homebrew)
 #
 # @date 2025-12-20
 
@@ -17,6 +18,16 @@ CFLAGS = -Wall -Wextra -Werror -pedantic -std=c11 -O2
 CFLAGS += -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE
 DEBUG_FLAGS = -g -O0 -DDEBUG -fsanitize=address -fsanitize=undefined
 LDFLAGS = -lwebsockets -lcjson -lssl -lcrypto -lpthread -lcurl
+
+# macOS detection and Homebrew paths
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    # Detect Homebrew prefix (Apple Silicon vs Intel)
+    BREW_PREFIX := $(shell brew --prefix 2>/dev/null || echo /usr/local)
+    OPENSSL_PREFIX := $(BREW_PREFIX)/opt/openssl@3
+    CFLAGS += -I$(BREW_PREFIX)/include -I$(OPENSSL_PREFIX)/include
+    LDFLAGS := -L$(BREW_PREFIX)/lib -L$(OPENSSL_PREFIX)/lib $(LDFLAGS)
+endif
 
 # Directories
 SRC_DIR = src
@@ -87,7 +98,15 @@ deps:
 		libwebsockets-dev \
 		libcjson-dev \
 		libssl-dev \
+		libcurl4-openssl-dev \
 		build-essential
+	@echo "Dependencies installed"
+
+# Install dependencies (macOS via Homebrew)
+.PHONY: deps-mac
+deps-mac:
+	@echo "Installing dependencies via Homebrew..."
+	brew install libwebsockets cjson curl openssl@3
 	@echo "Dependencies installed"
 
 # Check if dependencies are available

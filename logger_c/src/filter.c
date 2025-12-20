@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include <limits.h>
 
+#include "compat.h"
 #include "filter.h"
 
 void filter_init_defaults(filter_config_t *filter) {

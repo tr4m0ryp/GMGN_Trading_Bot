@@ -20,6 +20,15 @@ CFLAGS += -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE
 DEBUG_FLAGS = -g -O0 -DDEBUG -fsanitize=address -fsanitize=undefined
 LDFLAGS = -lwebsockets -lcjson -lssl -lcrypto -lpthread -lcurl
 
+# macOS detection and Homebrew paths
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    BREW_PREFIX := $(shell brew --prefix 2>/dev/null || echo /usr/local)
+    OPENSSL_PREFIX := $(BREW_PREFIX)/opt/openssl@3
+    CFLAGS += -I$(BREW_PREFIX)/include -I$(OPENSSL_PREFIX)/include
+    LDFLAGS := -L$(BREW_PREFIX)/lib -L$(OPENSSL_PREFIX)/lib $(LDFLAGS)
+endif
+
 # Directories
 SRC_DIR = src
 INC_DIR = include
