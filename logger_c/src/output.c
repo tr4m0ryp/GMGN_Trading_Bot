@@ -15,6 +15,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <inttypes.h>
 
 #include "output.h"
 #include "filter.h"
@@ -220,7 +221,7 @@ void output_log_token(const token_info_t *token, const pool_data_t *pool) {
     if (s_use_colors) {
         printf(ANSI_BOLD ANSI_GREEN);
     }
-    printf("\n[%s] NEW TOKEN #%lu ", timestamp, s_tokens_logged);
+    printf("\n[%s] NEW TOKEN #%" PRIu64 " ", timestamp, s_tokens_logged);
     if (s_use_colors) {
         printf(ANSI_RESET);
     }
@@ -380,8 +381,8 @@ void output_print_stats(uint64_t tokens_seen, uint64_t tokens_passed,
         printf(ANSI_RESET);
     }
     
-    printf("  Tokens Seen:    %lu\n", tokens_seen);
-    printf("  Tokens Passed:  %lu", tokens_passed);
+    printf("  Tokens Seen:    %" PRIu64 "\n", tokens_seen);
+    printf("  Tokens Passed:  %" PRIu64 "", tokens_passed);
     
     if (tokens_seen > 0) {
         double pass_rate = (double)tokens_passed / (double)tokens_seen * 100.0;
@@ -389,7 +390,7 @@ void output_print_stats(uint64_t tokens_seen, uint64_t tokens_passed,
     }
     printf("\n");
     
-    printf("  Messages:       %lu\n", messages_received);
+    printf("  Messages:       %" PRIu64 "\n", messages_received);
     
     /* Format uptime */
     uint32_t hours = uptime_seconds / 3600;

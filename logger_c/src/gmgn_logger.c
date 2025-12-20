@@ -24,6 +24,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <inttypes.h>
 
 #include "gmgn_types.h"
 #include "websocket_client.h"
@@ -205,7 +206,7 @@ static void on_token_passed(const tracked_token_t *tracked,
     g_tokens_passed++;
     
     /* Create pool data for output */
-    pool_data_t pool = {0};
+    pool_data_t pool = {};
     memcpy(pool.exchange, tracked->exchange, sizeof(pool.exchange));
     memcpy(pool.base_token.symbol, tracked->symbol, sizeof(pool.base_token.symbol));
     memcpy(pool.base_token.address, tracked->address, sizeof(pool.base_token.address));
@@ -234,7 +235,7 @@ static void on_new_pool(const pool_data_t *pool, void *user_data) {
     if (verbose && verbose[0] == '1') {
         FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
         if (debug_log) {
-            fprintf(debug_log, "[CALLBACK] Token #%lu seen: %s (MC: $%.2fK, KOL: %u, Ex: %s, Addr: %.20s...)\n",
+            fprintf(debug_log, "[CALLBACK] Token #%" PRIu64 " seen: %s (MC: $%.2fK, KOL: %u, Ex: %s, Addr: %.20s...)\n",
                     g_tokens_seen,
                     pool->base_token.symbol[0] ? pool->base_token.symbol : "???",
                     pool->base_token.market_cap / 100000.0,
@@ -284,7 +285,7 @@ static void on_pair_update(const pool_data_t *pool, void *user_data) {
     if (verbose && verbose[0] == '1') {
         FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
         if (debug_log) {
-            fprintf(debug_log, "[PAIR_UPDATE] #%lu: %s (Price: $%.8f, MC: $%.2fK)\n",
+            fprintf(debug_log, "[PAIR_UPDATE] #%" PRIu64 ": %s (Price: $%.8f, MC: $%.2fK)\n",
                     g_pair_updates,
                     pool->base_token.symbol[0] ? pool->base_token.symbol : "???",
                     (double)pool->base_token.price / 100000000.0,
@@ -316,7 +317,7 @@ static void on_token_launch(const pool_data_t *pool, void *user_data) {
     if (verbose && verbose[0] == '1') {
         FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
         if (debug_log) {
-            fprintf(debug_log, "[TOKEN_LAUNCH] #%lu: %s - %s (Ex: %s)\n",
+            fprintf(debug_log, "[TOKEN_LAUNCH] #%" PRIu64 ": %s - %s (Ex: %s)\n",
                     g_token_launches,
                     pool->base_token.symbol[0] ? pool->base_token.symbol : "???",
                     pool->base_token.name[0] ? pool->base_token.name : "Unknown",
@@ -359,7 +360,7 @@ static void print_periodic_stats(void) {
         }
         
         output_print_stats(g_tokens_seen, g_tokens_passed, messages, uptime);
-        printf("  Tracking: %u | Expired: %u | Pair Updates: %lu | Token Launches: %lu\n", 
+        printf("  Tracking: %u | Expired: %u | Pair Updates: %" PRIu64 " | Token Launches: %" PRIu64 "\n", 
                tracking, expired, g_pair_updates, g_token_launches);
     }
 }
