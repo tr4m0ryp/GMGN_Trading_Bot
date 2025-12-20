@@ -283,15 +283,6 @@ static int fetch_token_info(const char *address, token_info_t *info) {
     /* Fetch market cap */
     mc_result = fetch_market_cap(address, &info->market_cap);
     
-    /* Log results */
-    printf("[API] Token %.8s...: MC=$%.2fK, KOL=%d (mc:%s, kol:%s)\n",
-           address,
-           info->market_cap / 100000.0,  /* Convert cents to thousands */
-           info->kol_count,
-           mc_result == 0 ? "ok" : "fail",
-           kol_result == 0 ? "ok" : "fail");
-    fflush(stdout);
-    
     /* Consider success if we got at least one piece of data */
     return (kol_result == 0 || mc_result == 0) ? 0 : -1;
 }
@@ -327,9 +318,6 @@ static int find_token(token_tracker_t *tracker, const char *address) {
  */
 static void *tracker_thread(void *arg) {
     token_tracker_t *tracker = (token_tracker_t *)arg;
-    
-    printf("[TRACKER] Thread started\n");
-    fflush(stdout);
     
     while (tracker->running) {
         time_t now = time(NULL);
@@ -371,9 +359,6 @@ static void *tracker_thread(void *arg) {
             }
             
             checked_count++;
-            printf("[TRACKER] Checking token %s (age=%us, last_check=%lds ago)\n",
-                    t->symbol, age, (long)(now - t->last_check));
-            fflush(stdout);
             
             /* Fetch updated token info */
             token_info_t info = {0};

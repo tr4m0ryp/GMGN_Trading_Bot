@@ -333,7 +333,19 @@ void output_log_token(const token_info_t *token, const pool_data_t *pool) {
         }
     }
     
-    printf("-------------------------------------------------------------\n");
+    /* GMGN Link */
+    if (token->address[0] != '\0') {
+        printf("  GMGN:           ");
+        if (s_use_colors) {
+            printf(ANSI_CYAN);
+        }
+        printf("https://gmgn.ai/sol/token/%s\n", token->address);
+        if (s_use_colors) {
+            printf(ANSI_RESET);
+        }
+    }
+    
+    printf("=============================================================\n");
 }
 
 void output_log_filtered(const token_info_t *token, const char *reason) {
