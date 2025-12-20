@@ -124,12 +124,21 @@ main() {
     log_info "cf_clearance: ${GMGN_CF_CLEARANCE:0:50}..."
     log_info "Starting logger with args: $*"
     echo ""
-    
+
+    # Track start time for error suppression window
+    local start_time=$(date +%s)
+
     # Run the logger, capture stderr for error logging
     "${SCRIPT_DIR}/build/gmgn_logger" "$@" 2> >(while read -r line; do
-        # Filter out libwebsockets noise, log real errors
-        if [[ ! "${line}" =~ ^(lwsl_|lws_) ]]; then
-            log_error "${line}"
+        local current_time=$(date +%s)
+        local elapsed=$((current_time - start_time))
+
+        # Suppress all errors for first 5 seconds (libwebsockets initialization noise)
+        if [[ ${elapsed} -ge 5 ]]; then
+            # Filter out libwebsockets noise, log real errors
+            if [[ ! "${line}" =~ ^(lwsl_|lws_) ]]; then
+                log_error "${line}"
+            fi
         fi
     done)
     
