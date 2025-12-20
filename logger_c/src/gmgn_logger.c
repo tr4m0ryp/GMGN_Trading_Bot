@@ -420,7 +420,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     
-    output_print_info("Token tracker started (checking every 0.5s for up to 10 min)");
+    output_print_info("Token tracker started (checking every 100ms for up to 10 min)");
     
     /* Create WebSocket client */
     g_client = ws_client_create(config.websocket_url, 
@@ -451,8 +451,8 @@ int main(int argc, char *argv[]) {
     
     /* Main event loop */
     while (g_running) {
-        /* Service WebSocket events */
-        int events = ws_client_service(g_client, 100);
+        /* Service WebSocket events - ultra-fast polling */
+        int events = ws_client_service(g_client, 10);
         if (events < 0) {
             output_print_error(-1, "WebSocket service error");
             

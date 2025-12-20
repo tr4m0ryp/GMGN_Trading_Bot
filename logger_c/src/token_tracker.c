@@ -24,6 +24,11 @@
 #define GMGN_KOL_HOLDERS_API "https://gmgn.ai/vas/api/v1/token_holders/sol/"
 #define GMGN_MCAP_CANDLES_API "https://gmgn.ai/api/v1/token_mcap_candles/sol/"
 
+/* Persistent CURL handles for connection reuse (much faster than creating new ones) */
+static CURL *g_curl_kol = NULL;
+static CURL *g_curl_mcap = NULL;
+static struct curl_slist *g_headers = NULL;
+
 /**
  * @brief CURL response buffer
  */
@@ -54,53 +59,93 @@ static size_t curl_write_cb(void *contents, size_t size, size_t nmemb,
 }
 
 /**
- * @brief Setup common CURL options for GMGN API calls
+ * @brief Initialize persistent CURL handles for faster API calls
+ * Called once at startup to avoid per-request overhead
  */
-static void setup_curl_common(CURL *curl, curl_buffer_t *buffer, 
-                              const char *url, struct curl_slist **headers) {
+static void init_curl_handles(void) {
+    if (g_curl_kol || g_curl_mcap) return;  /* Already initialized */
+    
     char cookie_header[2048];
-    
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, buffer);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, TRACKER_API_TIMEOUT);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, 
-        "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0");
-    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    
-    /* Set Cloudflare session cookies */
     snprintf(cookie_header, sizeof(cookie_header),
         "cf_clearance=%s; _ga=%s; _ga_0XM0LYXGC8=%s; __cf_bm=%s",
         getenv("GMGN_CF_CLEARANCE") ? getenv("GMGN_CF_CLEARANCE") : "",
         getenv("GMGN_GA") ? getenv("GMGN_GA") : "",
         getenv("GMGN_GA_SESSION") ? getenv("GMGN_GA_SESSION") : "",
         getenv("GMGN_CF_BM") ? getenv("GMGN_CF_BM") : "");
-    curl_easy_setopt(curl, CURLOPT_COOKIE, cookie_header);
     
-    /* Browser-like headers */
-    *headers = curl_slist_append(*headers, "Accept: application/json");
-    *headers = curl_slist_append(*headers, "Accept-Language: en-US,en;q=0.5");
-    *headers = curl_slist_append(*headers, "Referer: https://gmgn.ai/");
-    *headers = curl_slist_append(*headers, "Origin: https://gmgn.ai");
-    *headers = curl_slist_append(*headers, "Sec-Fetch-Dest: empty");
-    *headers = curl_slist_append(*headers, "Sec-Fetch-Mode: cors");
-    *headers = curl_slist_append(*headers, "Sec-Fetch-Site: same-origin");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, *headers);
+    /* Build shared headers once */
+    g_headers = curl_slist_append(g_headers, "Accept: application/json");
+    g_headers = curl_slist_append(g_headers, "Accept-Language: en-US,en;q=0.5");
+    g_headers = curl_slist_append(g_headers, "Referer: https://gmgn.ai/");
+    g_headers = curl_slist_append(g_headers, "Origin: https://gmgn.ai");
+    g_headers = curl_slist_append(g_headers, "Sec-Fetch-Dest: empty");
+    g_headers = curl_slist_append(g_headers, "Sec-Fetch-Mode: cors");
+    g_headers = curl_slist_append(g_headers, "Sec-Fetch-Site: same-origin");
+    
+    /* Initialize KOL handle */
+    g_curl_kol = curl_easy_init();
+    if (g_curl_kol) {
+        curl_easy_setopt(g_curl_kol, CURLOPT_TIMEOUT, TRACKER_API_TIMEOUT);
+        curl_easy_setopt(g_curl_kol, CURLOPT_CONNECTTIMEOUT, 2L);
+        curl_easy_setopt(g_curl_kol, CURLOPT_USERAGENT, 
+            "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0");
+        curl_easy_setopt(g_curl_kol, CURLOPT_ACCEPT_ENCODING, "");
+        curl_easy_setopt(g_curl_kol, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(g_curl_kol, CURLOPT_COOKIE, cookie_header);
+        curl_easy_setopt(g_curl_kol, CURLOPT_HTTPHEADER, g_headers);
+        /* Connection reuse optimizations */
+        curl_easy_setopt(g_curl_kol, CURLOPT_TCP_KEEPALIVE, 1L);
+        curl_easy_setopt(g_curl_kol, CURLOPT_TCP_KEEPIDLE, 120L);
+        curl_easy_setopt(g_curl_kol, CURLOPT_TCP_KEEPINTVL, 60L);
+        curl_easy_setopt(g_curl_kol, CURLOPT_DNS_CACHE_TIMEOUT, 300L);
+    }
+    
+    /* Initialize MCAP handle */
+    g_curl_mcap = curl_easy_init();
+    if (g_curl_mcap) {
+        curl_easy_setopt(g_curl_mcap, CURLOPT_TIMEOUT, TRACKER_API_TIMEOUT);
+        curl_easy_setopt(g_curl_mcap, CURLOPT_CONNECTTIMEOUT, 2L);
+        curl_easy_setopt(g_curl_mcap, CURLOPT_USERAGENT, 
+            "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0");
+        curl_easy_setopt(g_curl_mcap, CURLOPT_ACCEPT_ENCODING, "");
+        curl_easy_setopt(g_curl_mcap, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(g_curl_mcap, CURLOPT_COOKIE, cookie_header);
+        curl_easy_setopt(g_curl_mcap, CURLOPT_HTTPHEADER, g_headers);
+        /* Connection reuse optimizations */
+        curl_easy_setopt(g_curl_mcap, CURLOPT_TCP_KEEPALIVE, 1L);
+        curl_easy_setopt(g_curl_mcap, CURLOPT_TCP_KEEPIDLE, 120L);
+        curl_easy_setopt(g_curl_mcap, CURLOPT_TCP_KEEPINTVL, 60L);
+        curl_easy_setopt(g_curl_mcap, CURLOPT_DNS_CACHE_TIMEOUT, 300L);
+    }
 }
 
 /**
- * @brief Fetch KOL count from GMGN token holders API
+ * @brief Cleanup persistent CURL handles
+ */
+static void cleanup_curl_handles(void) {
+    if (g_curl_kol) {
+        curl_easy_cleanup(g_curl_kol);
+        g_curl_kol = NULL;
+    }
+    if (g_curl_mcap) {
+        curl_easy_cleanup(g_curl_mcap);
+        g_curl_mcap = NULL;
+    }
+    if (g_headers) {
+        curl_slist_free_all(g_headers);
+        g_headers = NULL;
+    }
+}
+
+/**
+ * @brief Fetch KOL count from GMGN token holders API (ultra-fast version)
  * 
- * Uses /vas/api/v1/token_holders/sol/{address}?tag=renowned endpoint
- * Returns count of KOL/smart_degen holders
+ * Uses persistent CURL handle with connection reuse for speed.
  */
 static int fetch_kol_count(const char *address, uint8_t *kol_count) {
-    CURL *curl;
     CURLcode res;
     curl_buffer_t buffer = {0};
     char url[768];
-    struct curl_slist *headers = NULL;
     int ret = -1;
     
     if (!address || !kol_count) {
@@ -109,26 +154,29 @@ static int fetch_kol_count(const char *address, uint8_t *kol_count) {
     
     *kol_count = 0;
     
+    /* Use persistent CURL handle for speed */
+    if (!g_curl_kol) {
+        return -1;
+    }
+    
     /* Build URL with query params for renowned/KOL holders */
     snprintf(url, sizeof(url), 
         "%s%s?tag=renowned&limit=10&orderby=amount_percentage&direction=desc",
         GMGN_KOL_HOLDERS_API, address);
     
-    curl = curl_easy_init();
-    if (!curl) {
-        return -1;
-    }
-    
     buffer.data = malloc(1);
     buffer.size = 0;
     
-    setup_curl_common(curl, &buffer, url, &headers);
+    /* Set URL and write callback for this request */
+    curl_easy_setopt(g_curl_kol, CURLOPT_URL, url);
+    curl_easy_setopt(g_curl_kol, CURLOPT_WRITEFUNCTION, curl_write_cb);
+    curl_easy_setopt(g_curl_kol, CURLOPT_WRITEDATA, &buffer);
     
-    res = curl_easy_perform(curl);
+    res = curl_easy_perform(g_curl_kol);
     
     if (res == CURLE_OK && buffer.data) {
         long http_code = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+        curl_easy_getinfo(g_curl_kol, CURLINFO_RESPONSE_CODE, &http_code);
         
         if (http_code == 200) {
             cJSON *json = cJSON_Parse(buffer.data);
@@ -177,25 +225,20 @@ static int fetch_kol_count(const char *address, uint8_t *kol_count) {
         }
     }
     
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
     free(buffer.data);
     
     return ret;
 }
 
 /**
- * @brief Fetch market cap from GMGN token_mcap_candles API
+ * @brief Fetch market cap from GMGN token_mcap_candles API (ultra-fast version)
  * 
- * Uses the latest close price from 1s candles as market cap.
- * Endpoint: /api/v1/token_mcap_candles/sol/{address}
+ * Uses persistent CURL handle with connection reuse for speed.
  */
 static int fetch_market_cap(const char *address, uint64_t *market_cap) {
-    CURL *curl;
     CURLcode res;
     curl_buffer_t buffer = {0};
     char url[1024];
-    struct curl_slist *headers = NULL;
     int ret = -1;
     
     if (!address || !market_cap) {
@@ -204,26 +247,29 @@ static int fetch_market_cap(const char *address, uint64_t *market_cap) {
     
     *market_cap = 0;
     
+    /* Use persistent CURL handle for speed */
+    if (!g_curl_mcap) {
+        return -1;
+    }
+    
     /* Build URL for market cap candles - matches browser request format */
     snprintf(url, sizeof(url), 
         "%s%s?pool_type=tpool&resolution=1s&limit=5",
         GMGN_MCAP_CANDLES_API, address);
     
-    curl = curl_easy_init();
-    if (!curl) {
-        return -1;
-    }
-    
     buffer.data = malloc(1);
     buffer.size = 0;
     
-    setup_curl_common(curl, &buffer, url, &headers);
+    /* Set URL and write callback for this request */
+    curl_easy_setopt(g_curl_mcap, CURLOPT_URL, url);
+    curl_easy_setopt(g_curl_mcap, CURLOPT_WRITEFUNCTION, curl_write_cb);
+    curl_easy_setopt(g_curl_mcap, CURLOPT_WRITEDATA, &buffer);
     
-    res = curl_easy_perform(curl);
+    res = curl_easy_perform(g_curl_mcap);
     
     if (res == CURLE_OK && buffer.data) {
         long http_code = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+        curl_easy_getinfo(g_curl_mcap, CURLINFO_RESPONSE_CODE, &http_code);
         
         if (http_code == 200) {
             cJSON *json = cJSON_Parse(buffer.data);
@@ -261,8 +307,6 @@ static int fetch_market_cap(const char *address, uint64_t *market_cap) {
         }
     }
     
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
     free(buffer.data);
     
     return ret;
@@ -491,8 +535,8 @@ static void *tracker_thread(void *arg) {
 
         pthread_mutex_unlock(&tracker->lock);
 
-        /* Sleep before next round */
-        usleep(100000); /* 0.1 seconds - check frequently for 0.5s interval */
+        /* Sleep before next round - ultra-fast polling */
+        usleep(10000); /* 10ms - high-frequency checking */
     }
 
     return NULL;
@@ -512,6 +556,9 @@ int tracker_init(token_tracker_t *tracker, filter_config_t *filter) {
     
     /* Initialize CURL globally */
     curl_global_init(CURL_GLOBAL_DEFAULT);
+    
+    /* Initialize persistent CURL handles for fast API calls */
+    init_curl_handles();
     
     return 0;
 }
@@ -547,6 +594,10 @@ void tracker_cleanup(token_tracker_t *tracker) {
     
     tracker_stop(tracker);
     pthread_mutex_destroy(&tracker->lock);
+    
+    /* Cleanup persistent CURL handles */
+    cleanup_curl_handles();
+    
     curl_global_cleanup();
 }
 

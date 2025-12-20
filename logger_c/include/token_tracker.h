@@ -21,8 +21,8 @@
 
 /* Configuration */
 #define TRACKER_MAX_TOKENS      256     /* Maximum tracked tokens */
-#define TRACKER_CHECK_INTERVAL  500     /* Milliseconds between API checks */
-#define TRACKER_API_TIMEOUT     10      /* API request timeout seconds */
+#define TRACKER_CHECK_INTERVAL  100     /* Milliseconds between API checks (ultra-fast mode) */
+#define TRACKER_API_TIMEOUT     3       /* API request timeout seconds (fail fast) */
 
 /**
  * @brief Tracked token state
