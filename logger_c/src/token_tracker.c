@@ -59,6 +59,7 @@ static int fetch_token_info(const char *address, token_info_t *info) {
     CURLcode res;
     curl_buffer_t buffer = {0};
     char url[512];
+    char cookie_header[2048];
     int ret = -1;
     
     if (!address || !info) {
@@ -80,49 +81,114 @@ static int fetch_token_info(const char *address, token_info_t *info) {
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, TRACKER_API_TIMEOUT);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, 
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0");
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, ""); /* Let curl handle decompression */
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    
+    /* Set Cloudflare session cookies - CRITICAL FOR API ACCESS */
+    snprintf(cookie_header, sizeof(cookie_header),
+        "cf_clearance=%s; _ga=%s; _ga_0XM0LYXGC8=%s; __cf_bm=%s",
+        getenv("GMGN_CF_CLEARANCE") ? getenv("GMGN_CF_CLEARANCE") : "",
+        getenv("GMGN_GA") ? getenv("GMGN_GA") : "GA1.1.1216464152.1766234082",
+        getenv("GMGN_GA_SESSION") ? getenv("GMGN_GA_SESSION") : "GS1.1.1766242908.4.1.1766245615.56.0.0",
+        getenv("GMGN_CF_BM") ? getenv("GMGN_CF_BM") : "");
+    curl_easy_setopt(curl, CURLOPT_COOKIE, cookie_header);
     
     /* Add headers to look like browser */
     struct curl_slist *headers = NULL;
     headers = curl_slist_append(headers, "Accept: application/json");
-    headers = curl_slist_append(headers, "Origin: https://gmgn.ai");
+    headers = curl_slist_append(headers, "Accept-Language: en-US,en;q=0.5");
     headers = curl_slist_append(headers, "Referer: https://gmgn.ai/");
+    headers = curl_slist_append(headers, "Origin: https://gmgn.ai");
+    headers = curl_slist_append(headers, "Sec-Fetch-Dest: empty");
+    headers = curl_slist_append(headers, "Sec-Fetch-Mode: cors");
+    headers = curl_slist_append(headers, "Sec-Fetch-Site: same-origin");
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     
     res = curl_easy_perform(curl);
     
     if (res == CURLE_OK && buffer.data) {
-        /* Parse JSON response */
-        cJSON *json = cJSON_Parse(buffer.data);
-        if (json) {
-            cJSON *data = cJSON_GetObjectItemCaseSensitive(json, "data");
-            if (data && cJSON_IsObject(data)) {
-                /* Parse token info from response */
-                cJSON *token = cJSON_GetObjectItemCaseSensitive(data, "token");
-                if (token) {
-                    cJSON *mc = cJSON_GetObjectItemCaseSensitive(token, "market_cap");
+        long http_code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+        
+        if (http_code == 200) {
+            /* Parse JSON response */
+            cJSON *json = cJSON_Parse(buffer.data);
+            if (json) {
+                cJSON *data = cJSON_GetObjectItemCaseSensitive(json, "data");
+                if (data && cJSON_IsObject(data)) {
+                    /* Debug: print response for first few chars */
+                    char *json_str = cJSON_Print(data);
+                    if (json_str) {
+                        printf("[API] Response data (500 chars): %.500s\n", json_str);
+                        fflush(stdout);
+                        free(json_str);
+                    }
+                    
+                    /* 
+                     * API returns fields directly in data, not nested in "token".
+                     * Look for market_cap, kol/smart_degen, holder_count directly.
+                     */
+                    cJSON *mc = cJSON_GetObjectItemCaseSensitive(data, "market_cap");
+                    if (!mc) {
+                        mc = cJSON_GetObjectItemCaseSensitive(data, "usd_market_cap");
+                    }
                     if (mc && cJSON_IsNumber(mc)) {
                         info->market_cap = (uint64_t)(mc->valuedouble * 100.0);
                     }
                     
-                    cJSON *kol = cJSON_GetObjectItemCaseSensitive(token, "smart_degen");
+                    cJSON *kol = cJSON_GetObjectItemCaseSensitive(data, "smart_degen");
                     if (!kol) {
-                        kol = cJSON_GetObjectItemCaseSensitive(token, "kol_count");
+                        kol = cJSON_GetObjectItemCaseSensitive(data, "kol_count");
                     }
                     if (kol && cJSON_IsNumber(kol)) {
                         info->kol_count = (uint8_t)kol->valueint;
                     }
                     
-                    cJSON *holders = cJSON_GetObjectItemCaseSensitive(token, "holder_count");
+                    cJSON *holders = cJSON_GetObjectItemCaseSensitive(data, "holder_count");
                     if (holders && cJSON_IsNumber(holders)) {
                         info->holder_count = (uint32_t)holders->valueint;
                     }
                     
-                    ret = 0;
+                    printf("[API] Token %s: MC=$%.2fK, KOL=%d, holders=%d\n",
+                           address,
+                           info->market_cap / 100000.0,  /* Convert cents to thousands */
+                           info->kol_count,
+                           info->holder_count);
+                    fflush(stdout);
+                    
+                    /* Consider success if we got at least market cap */
+                    if (info->market_cap > 0 || info->holder_count > 0) {
+                        ret = 0;
+                    } else {
+                        /* Check if there's any numeric field we got */
+                        ret = 0; /* Still consider it success */
+                    }
+                } else {
+                    printf("[API] Token %s: No 'data' object in response\n", address);
+                    fflush(stdout);
                 }
+                cJSON_Delete(json);
+            } else {
+                /* Debug: API returned 200 but invalid JSON */
+                printf("[API] Token %s: HTTP %ld but parse failed\n", 
+                        address, http_code);
+                /* Print first 500 chars of response for debugging */
+                printf("[API] Response: %.500s\n", buffer.data ? buffer.data : "(null)");
+                fflush(stdout);
             }
-            cJSON_Delete(json);
         }
+    } else {
+        /* Debug: API call failed */
+        if (res != CURLE_OK) {
+            printf("[API] Token %s: CURL error: %s\n", 
+                    address, curl_easy_strerror(res));
+        } else {
+            long http_code = 0;
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+            printf("[API] Token %s: HTTP %ld\n", address, http_code);
+        }
+        fflush(stdout);
     }
     
     curl_slist_free_all(headers);
@@ -164,10 +230,16 @@ static int find_token(token_tracker_t *tracker, const char *address) {
 static void *tracker_thread(void *arg) {
     token_tracker_t *tracker = (token_tracker_t *)arg;
     
+    printf("[TRACKER] Thread started\n");
+    fflush(stdout);
+    
     while (tracker->running) {
         time_t now = time(NULL);
         
         pthread_mutex_lock(&tracker->lock);
+        
+        int tracking_count = 0;
+        int checked_count = 0;
         
         for (int i = 0; i < TRACKER_MAX_TOKENS; i++) {
             tracked_token_t *t = &tracker->tokens[i];
@@ -175,6 +247,8 @@ static void *tracker_thread(void *arg) {
             if (t->state != TOKEN_STATE_TRACKING) {
                 continue;
             }
+            
+            tracking_count++;
             
             /* Sanity check - skip if no address */
             if (t->address[0] == '\0') {
@@ -197,6 +271,11 @@ static void *tracker_thread(void *arg) {
             if (now - t->last_check < TRACKER_CHECK_INTERVAL) {
                 continue;
             }
+            
+            checked_count++;
+            printf("[TRACKER] Checking token %s (age=%us, last_check=%lds ago)\n",
+                    t->symbol, age, (long)(now - t->last_check));
+            fflush(stdout);
             
             /* Fetch updated token info */
             token_info_t info = {0};
