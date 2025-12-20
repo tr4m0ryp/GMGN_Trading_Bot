@@ -290,10 +290,13 @@ static int fetch_token_info(const char *address, token_info_t *info) {
 
 /**
  * @brief Find free slot in tracker
+ * Also reclaims expired and passed slots for reuse
  */
 static int find_free_slot(token_tracker_t *tracker) {
     for (int i = 0; i < TRACKER_MAX_TOKENS; i++) {
         if (tracker->tokens[i].state == TOKEN_STATE_REMOVED ||
+            tracker->tokens[i].state == TOKEN_STATE_EXPIRED ||
+            tracker->tokens[i].state == TOKEN_STATE_PASSED ||
             tracker->tokens[i].address[0] == '\0') {
             return i;
         }
@@ -353,8 +356,14 @@ static void *tracker_thread(void *arg) {
                 continue;
             }
 
-            /* Check if token has exceeded max age */
-            uint32_t age = (uint32_t)(now - t->discovered_at);
+            /* Check if token has exceeded max age 
+             * Guard against race condition where discovered_at is in the future
+             * (can happen if token was just added by another thread)
+             */
+            uint32_t age = 0;
+            if (now >= t->discovered_at) {
+                age = (uint32_t)(now - t->discovered_at);
+            }
             if (tracker->filter->max_age_seconds > 0 &&
                 age > tracker->filter->max_age_seconds) {
                 t->state = TOKEN_STATE_EXPIRED;
@@ -365,7 +374,8 @@ static void *tracker_thread(void *arg) {
                 if (verbose && verbose[0] == '1') {
                     FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
                     if (debug_log) {
-                        fprintf(debug_log, "[TRACKER] Token expired (too old): %s\n", t->symbol);
+                        fprintf(debug_log, "[TRACKER] Token expired (too old): %s (age=%us, discovered_at=%ld, now=%ld, max=%us)\n", 
+                                t->symbol, age, (long)t->discovered_at, (long)now, tracker->filter->max_age_seconds);
                         fclose(debug_log);
                     }
                 }
@@ -574,6 +584,16 @@ int tracker_add_token(token_tracker_t *tracker, const pool_data_t *pool) {
     t->state = TOKEN_STATE_TRACKING;
     
     tracker->active_count++;
+    
+    const char *verbose = getenv("GMGN_DEBUG");
+    if (verbose && verbose[0] == '1') {
+        FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
+        if (debug_log) {
+            fprintf(debug_log, "[TRACKER] Token added to tracker: %s (slot=%d, discovered_at=%ld)\n", 
+                    t->symbol, slot, (long)t->discovered_at);
+            fclose(debug_log);
+        }
+    }
     
     pthread_mutex_unlock(&tracker->lock);
     

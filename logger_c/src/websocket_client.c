@@ -23,6 +23,9 @@
 /* Buffer sizes */
 #define WS_RX_BUFFER_SIZE       65536
 #define WS_TX_BUFFER_SIZE       4096
+
+/* Flag to track if we've initialized lws logging */
+static int s_lws_log_initialized = 0;
 #define WS_MAX_PENDING_MSGS     16
 
 /**
@@ -511,6 +514,19 @@ int ws_client_connect(ws_client_t *client) {
         return -1;
     }
     
+    /* Suppress noisy libwebsockets internal logging (only show errors) */
+    if (!s_lws_log_initialized) {
+        const char *debug = getenv("GMGN_LWS_DEBUG");
+        if (debug && debug[0] == '1') {
+            /* Full debug logging if GMGN_LWS_DEBUG=1 */
+            lws_set_log_level(LLL_ERR | LLL_WARN | LLL_NOTICE | LLL_INFO, NULL);
+        } else {
+            /* Only show critical errors */
+            lws_set_log_level(LLL_ERR, NULL);
+        }
+        s_lws_log_initialized = 1;
+    }
+    
     /* Create context if needed */
     if (!client->context) {
         struct lws_context_creation_info info;
@@ -520,7 +536,10 @@ int ws_client_connect(ws_client_t *client) {
         info.protocols = s_protocols;
         info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
         info.user = client;
-        info.pt_serv_buf_size = 8192;  /* Increase header buffer size */
+        /* GMGN server sends large HTTP headers - need big buffers */
+        info.pt_serv_buf_size = 32768;           /* Per-thread service buffer */
+        info.max_http_header_data = 16384;       /* HTTP header parser buffer */
+        info.max_http_header_pool = 4;           /* HTTP header pool size */
         
         client->context = lws_create_context(&info);
         if (!client->context) {
