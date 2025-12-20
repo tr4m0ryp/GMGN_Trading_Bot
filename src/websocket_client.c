@@ -36,7 +36,7 @@ struct ws_client {
     /* Connection parameters */
     char url[GMGN_MAX_URL_LEN];
     char host[128];
-    char path[128];
+    char path[512];  /* Increased for query parameters */
     int port;
     int use_ssl;
     char access_token[GMGN_MAX_TOKEN_LEN];
@@ -428,6 +428,7 @@ int ws_client_connect(ws_client_t *client) {
         info.protocols = s_protocols;
         info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
         info.user = client;
+        info.pt_serv_buf_size = 8192;  /* Increase header buffer size */
         
         client->context = lws_create_context(&info);
         if (!client->context) {
