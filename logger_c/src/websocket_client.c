@@ -69,6 +69,10 @@ struct ws_client {
     /* Callbacks */
     pool_callback_fn pool_callback;
     void *pool_callback_data;
+    pair_update_callback_fn pair_update_callback;
+    void *pair_update_callback_data;
+    token_launch_callback_fn token_launch_callback;
+    void *token_launch_callback_data;
     error_callback_fn error_callback;
     void *error_callback_data;
 };
@@ -220,6 +224,48 @@ static void process_message(ws_client_t *client, const char *msg, size_t len) {
             if (count > 0 && client->pool_callback) {
                 for (int i = 0; i < count; i++) {
                     client->pool_callback(&pools[i], client->pool_callback_data);
+                }
+            }
+            break;
+        }
+
+        case GMGN_MSG_PAIR_UPDATE: {
+            /* Pair update: price/volume updates for trading pairs */
+            pool_data_t pools[8];
+            int count = json_parse_new_pools(msg, len, pools, 8);
+
+            if (verbose && verbose[0] == '1') {
+                FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
+                if (debug_log) {
+                    fprintf(debug_log, "[DEBUG] Parsed %d pair update(s) from PAIR_UPDATE message\n", count);
+                    fclose(debug_log);
+                }
+            }
+
+            if (count > 0 && client->pair_update_callback) {
+                for (int i = 0; i < count; i++) {
+                    client->pair_update_callback(&pools[i], client->pair_update_callback_data);
+                }
+            }
+            break;
+        }
+
+        case GMGN_MSG_TOKEN_LAUNCH: {
+            /* Token launch: new token launch notifications */
+            pool_data_t pools[8];
+            int count = json_parse_new_pools(msg, len, pools, 8);
+
+            if (verbose && verbose[0] == '1') {
+                FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
+                if (debug_log) {
+                    fprintf(debug_log, "[DEBUG] Parsed %d token launch(es) from TOKEN_LAUNCH message\n", count);
+                    fclose(debug_log);
+                }
+            }
+
+            if (count > 0 && client->token_launch_callback) {
+                for (int i = 0; i < count; i++) {
+                    client->token_launch_callback(&pools[i], client->token_launch_callback_data);
                 }
             }
             break;
@@ -585,6 +631,24 @@ void ws_client_set_error_callback(ws_client_t *client, error_callback_fn callbac
     if (client) {
         client->error_callback = callback;
         client->error_callback_data = user_data;
+    }
+}
+
+void ws_client_set_pair_update_callback(ws_client_t *client, 
+                                         pair_update_callback_fn callback,
+                                         void *user_data) {
+    if (client) {
+        client->pair_update_callback = callback;
+        client->pair_update_callback_data = user_data;
+    }
+}
+
+void ws_client_set_token_launch_callback(ws_client_t *client,
+                                          token_launch_callback_fn callback,
+                                          void *user_data) {
+    if (client) {
+        client->token_launch_callback = callback;
+        client->token_launch_callback_data = user_data;
     }
 }
 

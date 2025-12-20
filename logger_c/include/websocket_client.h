@@ -131,6 +131,28 @@ void ws_client_set_error_callback(ws_client_t *client, error_callback_fn callbac
                                    void *user_data);
 
 /**
+ * @brief Set callback for pair update events (price/volume updates)
+ *
+ * @param client Pointer to client instance
+ * @param callback Callback function
+ * @param user_data User context passed to callback
+ */
+void ws_client_set_pair_update_callback(ws_client_t *client, 
+                                         pair_update_callback_fn callback,
+                                         void *user_data);
+
+/**
+ * @brief Set callback for token launch events
+ *
+ * @param client Pointer to client instance
+ * @param callback Callback function
+ * @param user_data User context passed to callback
+ */
+void ws_client_set_token_launch_callback(ws_client_t *client,
+                                          token_launch_callback_fn callback,
+                                          void *user_data);
+
+/**
  * @brief Send ping to keep connection alive
  *
  * @param client Pointer to client instance

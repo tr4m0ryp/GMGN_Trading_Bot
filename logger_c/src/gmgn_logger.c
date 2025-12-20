@@ -51,6 +51,8 @@ static token_tracker_t *g_tracker = NULL;
 static time_t g_start_time = 0;
 static uint64_t g_tokens_seen = 0;
 static uint64_t g_tokens_passed = 0;
+static uint64_t g_pair_updates = 0;
+static uint64_t g_token_launches = 0;
 
 /**
  * @brief Signal handler for graceful shutdown
@@ -266,6 +268,70 @@ static void on_new_pool(const pool_data_t *pool, void *user_data) {
 }
 
 /**
+ * @brief Callback for pair update events (price/volume updates)
+ */
+static void on_pair_update(const pool_data_t *pool, void *user_data) {
+    (void)user_data;
+
+    if (!pool) {
+        return;
+    }
+
+    g_pair_updates++;
+
+    /* Debug logging */
+    const char *verbose = getenv("GMGN_DEBUG");
+    if (verbose && verbose[0] == '1') {
+        FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
+        if (debug_log) {
+            fprintf(debug_log, "[PAIR_UPDATE] #%lu: %s (Price: $%.8f, MC: $%.2fK)\n",
+                    g_pair_updates,
+                    pool->base_token.symbol[0] ? pool->base_token.symbol : "???",
+                    (double)pool->base_token.price / 100000000.0,
+                    pool->base_token.market_cap / 100000.0);
+            fclose(debug_log);
+        }
+    }
+
+    /* Update tracked tokens with new price/volume info if token is being tracked */
+    if (g_tracker && pool->base_token.address[0]) {
+        /* Could update the tracker with new price info here if needed */
+    }
+}
+
+/**
+ * @brief Callback for token launch events (new tokens being launched)
+ */
+static void on_token_launch(const pool_data_t *pool, void *user_data) {
+    (void)user_data;
+
+    if (!pool) {
+        return;
+    }
+
+    g_token_launches++;
+
+    /* Debug logging */
+    const char *verbose = getenv("GMGN_DEBUG");
+    if (verbose && verbose[0] == '1') {
+        FILE *debug_log = fopen("/tmp/gmgn_debug.log", "a");
+        if (debug_log) {
+            fprintf(debug_log, "[TOKEN_LAUNCH] #%lu: %s - %s (Ex: %s)\n",
+                    g_token_launches,
+                    pool->base_token.symbol[0] ? pool->base_token.symbol : "???",
+                    pool->base_token.name[0] ? pool->base_token.name : "Unknown",
+                    pool->exchange[0] ? pool->exchange : "???");
+            fclose(debug_log);
+        }
+    }
+
+    /* Token launches are similar to new pools - add to tracker */
+    if (g_tracker) {
+        tracker_add_token(g_tracker, pool);
+    }
+}
+
+/**
  * @brief Callback for error events
  */
 static void on_error(int error_code, const char *error_msg, void *user_data) {
@@ -293,7 +359,8 @@ static void print_periodic_stats(void) {
         }
         
         output_print_stats(g_tokens_seen, g_tokens_passed, messages, uptime);
-        printf("  Tracking: %u | Expired: %u\n", tracking, expired);
+        printf("  Tracking: %u | Expired: %u | Pair Updates: %lu | Token Launches: %lu\n", 
+               tracking, expired, g_pair_updates, g_token_launches);
     }
 }
 
@@ -365,6 +432,8 @@ int main(int argc, char *argv[]) {
     
     /* Set callbacks */
     ws_client_set_pool_callback(g_client, on_new_pool, &config.filter);
+    ws_client_set_pair_update_callback(g_client, on_pair_update, &config.filter);
+    ws_client_set_token_launch_callback(g_client, on_token_launch, &config.filter);
     ws_client_set_error_callback(g_client, on_error, NULL);
     
     /* Connect */
@@ -404,11 +473,24 @@ int main(int argc, char *argv[]) {
             
             /* Subscribe when connected */
             if (state == GMGN_STATE_CONNECTED && last_state == GMGN_STATE_CONNECTING) {
-                output_print_info("Subscribing to new_pool_info channel...");
+                output_print_info("Subscribing to WebSocket channels...");
                 
+                /* Subscribe to new pool info channel */
                 if (ws_client_subscribe(g_client, "new_pool_info", config.chain) != 0) {
-                    output_print_error(-1, "Failed to subscribe to channel");
+                    output_print_error(-1, "Failed to subscribe to new_pool_info channel");
                 }
+                
+                /* Subscribe to pair update channel for price/volume updates */
+                if (ws_client_subscribe(g_client, "new_pair_update", config.chain) != 0) {
+                    output_print_error(-1, "Failed to subscribe to new_pair_update channel");
+                }
+                
+                /* Subscribe to token launch channel for new token launches */
+                if (ws_client_subscribe(g_client, "new_launched_info", config.chain) != 0) {
+                    output_print_error(-1, "Failed to subscribe to new_launched_info channel");
+                }
+                
+                output_print_info("Subscribed to: new_pool_info, new_pair_update, new_launched_info");
             }
             
             last_state = state;

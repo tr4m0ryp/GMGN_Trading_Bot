@@ -5,10 +5,22 @@ Real-time Solana token logger that connects to GMGN.ai WebSocket API.
 ## Features
 
 - Real-time connection to GMGN.ai WebSocket API
+- **Multiple WebSocket channel support:**
+  - `new_pool_info` - New liquidity pool creation events
+  - `new_pair_update` - Real-time price and volume updates
+  - `new_launched_info` - New token launch notifications
 - Configurable token filters (market cap, KOL count, age, etc.)
 - Terminal-based output with color support
 - Automatic reconnection with exponential backoff
 - Low latency C implementation
+
+## WebSocket Channels
+
+| Channel | Purpose |
+|---------|---------|
+| `new_pool_info` | Notifies when new liquidity pools are created |
+| `new_pair_update` | Real-time price/volume updates for trading pairs |
+| `new_launched_info` | Notifies when new tokens are launched |
 
 ## Default Filters
 

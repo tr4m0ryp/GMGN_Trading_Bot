@@ -158,13 +158,29 @@ typedef enum {
 typedef void (*pool_callback_fn)(const pool_data_t *pool, void *user_data);
 
 /**
+ * @brief Callback function type for pair update events
+ *
+ * @param pool Pointer to pool/pair data
+ * @param user_data User-provided context pointer
+ */
+typedef void (*pair_update_callback_fn)(const pool_data_t *pool, void *user_data);
+
+/**
+ * @brief Callback function type for token launch events
+ *
+ * @param pool Pointer to pool/token data
+ * @param user_data User-provided context pointer
+ */
+typedef void (*token_launch_callback_fn)(const pool_data_t *pool, void *user_data);
+
+/**
  * @brief Callback function type for errors
  *
  * @param error_code Error code
  * @param error_msg Error message string
  * @param user_data User-provided context pointer
  */
-typedef void (*error_callback_fn)(int error_code, const char *error_msg, 
+typedef void (*error_callback_fn)(int error_code, const char *error_msg,
                                    void *user_data);
 
 #endif /* GMGN_TYPES_H */
