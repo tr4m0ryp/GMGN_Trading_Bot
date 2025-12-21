@@ -1,0 +1,43 @@
+# Model weights and checkpoints
+models/*.pth
+models/checkpoints/*.pth
+
+# Processed data
+data/processed/
+data/test/
+
+# Jupyter notebook outputs
+notebooks/.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# TensorBoard
+runs/
+tensorboard/
+
+# Weights & Biases
+wandb/
+
+# OS
+.DS_Store
+Thumbs.db
