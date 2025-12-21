@@ -242,6 +242,75 @@ def calculate_momentum(prices: np.ndarray, period: int = 10) -> np.ndarray:
     return momentum
 
 
+def normalize_features(features: np.ndarray) -> np.ndarray:
+    """
+    Normalize features to prevent numerical instability.
+
+    Applies normalization strategies appropriate for each feature type:
+    - Prices (OHLC): Normalized to percentage change from first price
+    - Volume: Log-normalized
+    - RSI: Scaled to 0-1 range (from 0-100)
+    - MACD: Normalized by current price
+    - Bollinger Bands: Normalized by current price
+    - VWAP: Normalized by current price
+    - Momentum: Already in percentage form, kept as-is
+
+    Args:
+        features: Raw feature array of shape (seq_len, 11).
+
+    Returns:
+        Normalized feature array with NaN/Inf replaced by 0.
+
+    Note:
+        This prevents gradient explosion and NaN losses during training.
+    """
+    normalized = features.copy()
+
+    # Extract feature columns
+    opens = features[:, 0]
+    highs = features[:, 1]
+    lows = features[:, 2]
+    closes = features[:, 3]
+    volumes = features[:, 4]
+    rsi = features[:, 5]
+    macd = features[:, 6]
+    bb_upper = features[:, 7]
+    bb_lower = features[:, 8]
+    vwap = features[:, 9]
+    momentum = features[:, 10]
+
+    # Normalize OHLC: percentage change from first price
+    first_price = closes[0] if closes[0] != 0 else 1.0
+    normalized[:, 0] = (opens - first_price) / first_price
+    normalized[:, 1] = (highs - first_price) / first_price
+    normalized[:, 2] = (lows - first_price) / first_price
+    normalized[:, 3] = (closes - first_price) / first_price
+
+    # Normalize volume: log transform with small epsilon to avoid log(0)
+    normalized[:, 4] = np.log1p(volumes)
+
+    # Normalize RSI: scale to 0-1 from 0-100
+    normalized[:, 5] = rsi / 100.0
+
+    # Normalize MACD by current price
+    normalized[:, 6] = np.where(closes != 0, macd / closes, 0)
+
+    # Normalize Bollinger Bands by current price
+    normalized[:, 7] = np.where(closes != 0, (bb_upper - closes) / closes, 0)
+    normalized[:, 8] = np.where(closes != 0, (bb_lower - closes) / closes, 0)
+
+    # Normalize VWAP by current price
+    normalized[:, 9] = np.where(closes != 0, (vwap - closes) / closes, 0)
+
+    # Momentum is already in percentage form, keep as-is
+    normalized[:, 10] = momentum
+
+    # Replace any remaining NaN or Inf values with 0
+    normalized = np.nan_to_num(normalized, nan=0.0, posinf=0.0, neginf=0.0)
+
+    return normalized.astype(np.float32)
+
+
 def extract_features(candles: List[Dict[str, float]]) -> np.ndarray:
     """
     Extract OHLCV and technical indicators from candles.
@@ -250,11 +319,13 @@ def extract_features(candles: List[Dict[str, float]]) -> np.ndarray:
     - OHLCV (5 features): open, high, low, close, volume
     - Technical indicators (6 features): RSI, MACD, BB_upper, BB_lower, VWAP, Momentum
 
+    All features are normalized to prevent numerical instability and gradient explosion.
+
     Args:
         candles: List of candle dictionaries.
 
     Returns:
-        Feature array of shape (len(candles), 11).
+        Normalized feature array of shape (len(candles), 11).
 
     Example:
         >>> candles = load_token_candles('token_ABC.csv')
@@ -278,6 +349,9 @@ def extract_features(candles: List[Dict[str, float]]) -> np.ndarray:
         opens, highs, lows, closes, volumes,
         rsi, macd, bb_upper, bb_lower, vwap, momentum
     ])
+
+    # Normalize features to prevent numerical instability
+    features = normalize_features(features)
 
     return features.astype(np.float32)
 

@@ -21,7 +21,10 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler
+try:
+    from torch.amp import autocast, GradScaler
+except ImportError:
+    from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
 
 from utils import save_checkpoint
@@ -69,7 +72,7 @@ def train_epoch(model: nn.Module,
         seq_lengths = batch['seq_lengths']
 
         if scaler is not None:
-            with autocast():
+            with autocast(device_type='cuda' if device == 'cuda' else 'cpu'):
                 predictions, _ = model(features, seq_lengths)
                 loss = criterion(predictions, labels)
                 loss = loss / accumulation_steps
@@ -210,7 +213,7 @@ def train_model(model: nn.Module,
         patience=5
     )
 
-    scaler = GradScaler() if use_mixed_precision and device == 'cuda' else None
+    scaler = GradScaler(device='cuda') if use_mixed_precision and device == 'cuda' else None
 
     best_val_loss = float('inf')
     best_epoch = 0
