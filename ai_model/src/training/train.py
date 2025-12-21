@@ -152,23 +152,25 @@ def validate(model: nn.Module,
 
 def compute_class_weights(train_loader: DataLoader,
                          num_classes: int,
-                         device: str) -> torch.Tensor:
+                         device: str,
+                         smoothing: float = 0.3) -> torch.Tensor:
     """
     Compute class weights for imbalanced datasets.
 
-    Uses inverse class frequency weighting to handle class imbalance.
-    Weights are normalized so they average to 1.0.
+    Uses inverse class frequency weighting with smoothing to handle class imbalance.
+    Weights are normalized so they average to 1.0. Smoothing reduces extreme weights.
 
     Args:
         train_loader: DataLoader for training data.
         num_classes: Number of classes.
         device: Device to place weights on.
+        smoothing: Smoothing factor (0=no smoothing, 1=uniform weights). Default 0.3.
 
     Returns:
         Tensor of class weights of shape (num_classes,).
 
     Example:
-        >>> weights = compute_class_weights(train_loader, 3, 'cuda')
+        >>> weights = compute_class_weights(train_loader, 3, 'cuda', smoothing=0.3)
         >>> print(f"Class weights: {weights}")
     """
     class_counts = torch.zeros(num_classes)
@@ -180,6 +182,9 @@ def compute_class_weights(train_loader: DataLoader,
 
     total_samples = class_counts.sum()
     class_weights = total_samples / (num_classes * class_counts)
+
+    # Apply smoothing: move weights toward 1.0
+    class_weights = class_weights * (1 - smoothing) + smoothing
 
     # Normalize weights so they average to 1.0
     class_weights = class_weights / class_weights.mean()
