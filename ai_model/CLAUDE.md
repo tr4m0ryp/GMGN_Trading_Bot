@@ -20,7 +20,7 @@ This project focuses on **Python with PyTorch** for deep learning model developm
 
 ## Project Overview
 
-This directory contains the **AI Trading Model** for GMGN token trading. The model uses variable-length LSTM/Transformer architectures to predict optimal BUY/SELL/HOLD signals based on full historical price data.
+This directory contains the **AI Trading Model** for GMGN token trading. The model uses variable-length LSTM architecture to predict optimal BUY/SELL/HOLD signals based on full historical price data.
 
 ## Directory Structure
 
@@ -38,10 +38,10 @@ ai_model/
 ├── src/                   # Python source files (CORE MODEL CODE)
 │   ├── data_preparation.py    # Data preprocessing and feature extraction
 │   ├── model_lstm.py          # LSTM model architecture
-│   ├── model_transformer.py   # Transformer model architecture
 │   ├── train.py               # Training logic
 │   ├── evaluate.py            # Evaluation and backtesting
-│   └── utils.py               # Helper functions
+│   ├── utils.py               # Helper functions
+│   └── config.py              # Configuration management
 └── notebooks/             # Jupyter notebooks (GPU ACCESS ONLY)
     └── train_gpu.ipynb    # Notebook wrapper for GPU training
 ```
@@ -480,7 +480,7 @@ Use configuration dictionaries or YAML files:
 # src/config.py
 DEFAULT_CONFIG = {
     'model': {
-        'type': 'lstm',  # or 'transformer'
+        'type': 'lstm',
         'input_size': 11,
         'hidden_size': 128,
         'num_layers': 2,
@@ -573,10 +573,10 @@ def set_seed(seed: int = 42):
    - Create train/val/test splits
    - Save processed data
 
-2. **Model Implementation** (`src/model_lstm.py` or `src/model_transformer.py`)
-   - Define model architecture
-   - Implement forward pass
-   - Add helper methods
+2. **Model Implementation** (`src/model_lstm.py`)
+   - Define LSTM model architecture
+   - Implement forward pass with packed sequences
+   - Add prediction methods with confidence scoring
 
 3. **Training Setup** (`src/train.py`)
    - Define training loop

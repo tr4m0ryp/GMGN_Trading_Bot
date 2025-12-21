@@ -17,12 +17,7 @@ Data preprocessing and feature extraction:
 LSTM model architecture:
 - `VariableLengthLSTMTrader` - Main model class
 - Handles variable-length sequences with pack_padded_sequence
-
-### model_transformer.py
-Transformer model architecture:
-- `PositionalEncoding` - Positional encoding layer
-- `TransformerTrader` - Main model class
-- Handles variable-length with attention masks
+- Outputs BUY/HOLD/SELL predictions with confidence scores
 
 ### train.py
 Training logic:
@@ -41,9 +36,16 @@ Evaluation and backtesting:
 ### utils.py
 Helper functions:
 - `set_seed()` - Set random seeds for reproducibility
-- `collate_variable_length()` - DataLoader collate function
-- `create_padding_mask()` - Attention mask creation
+- `save_checkpoint()` - Save model checkpoints
+- `load_checkpoint()` - Load model checkpoints
+- `get_device()` - Get available device (CPU/CUDA)
 - Logging utilities
+
+### config.py
+Configuration management:
+- `DEFAULT_CONFIG` - Default configuration dictionary
+- `get_config()` - Get configuration with all hyperparameters
+- Trading constants (fees, position sizes, thresholds)
 
 ## Usage Example
 
