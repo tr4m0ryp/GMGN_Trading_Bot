@@ -207,8 +207,7 @@ def train_model(model: nn.Module,
         optimizer,
         mode='min',
         factor=0.5,
-        patience=5,
-        verbose=True
+        patience=5
     )
 
     scaler = GradScaler() if use_mixed_precision and device == 'cuda' else None
