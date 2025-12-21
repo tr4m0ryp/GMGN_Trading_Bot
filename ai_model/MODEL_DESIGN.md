@@ -18,9 +18,8 @@
 
 ---
 
-## Model Architecture Options
+## Model Architecture: LSTM
 
-### Option A: LSTM (Recommended for Start)
 
 **Architecture:**
 ```
@@ -51,44 +50,6 @@ Output:
 - Proven architecture for sequence modeling
 - Efficient training on GPU
 
-### Option B: Transformer (For Advanced Users)
-
-**Architecture:**
-```
-Input: Variable-length sequences (batch, seq_len, 11 features)
-
-Input Projection:
-  - Linear: 11 features -> d_model (128)
-
-Positional Encoding:
-  - Sinusoidal position embeddings
-  - Max length: 1000 timesteps
-
-Transformer Encoder:
-  - 4-6 layers
-  - 8 attention heads per layer
-  - d_model: 128
-  - Feedforward dim: 512
-  - Dropout: 0.3
-  - Attention masks for padding
-
-Classification Head:
-  - FC1: d_model -> 64
-  - ReLU activation
-  - Dropout: 0.3
-  - FC2: 64 -> 3 (BUY/HOLD/SELL)
-  - Softmax output
-
-Output:
-  - Predictions: (batch, 3) - class probabilities
-  - Confidence: (batch,) - max probability
-```
-
-**Advantages:**
-- Better for long-range dependencies
-- Parallel processing (faster than LSTM)
-- State-of-the-art for sequence tasks
-- Attention mechanism reveals important timesteps
 
 ---
 
@@ -104,6 +65,8 @@ Each training sample consists of ALL historical data from token discovery to cur
 - **Volume**: Trading volume in the second
 
 ### Technical Indicators (6 features)
+*These features are pre-calculated during the preprocessing step and added to the dataset before training. The model receives them as input values, not formulas.*
+
 - **RSI (14)**: Relative Strength Index (14-period, adjusted for sequence length)
 - **MACD**: Moving Average Convergence Divergence (12, 26, 9)
 - **Bollinger Upper**: Upper Bollinger Band (20-period)
@@ -271,7 +234,6 @@ All labels based on NET profit potential:
 Each sample has different length:
 - Requires padding/masking for batching
 - LSTM handles natively with pack_padded_sequence
-- Transformers use attention masks
 
 ---
 
@@ -318,7 +280,7 @@ train_loader = DataLoader(
 
 | Metric | Target | Rationale |
 |--------|--------|-----------|
-| Win rate | >60% | Conservative, achievable with 30-40% targets |
+| Win rate | >80% | Conservative, achievable with 30-40% targets |
 | Avg profit/trade | >18% NET | Well above transaction costs (~7%) |
 | Sharpe ratio | >1.5 | Strong risk-adjusted returns |
 | Max drawdown | <15% | Acceptable risk level |
@@ -334,16 +296,88 @@ train_loader = DataLoader(
 
 ---
 
-## Comparison: Fixed Window vs Variable-Length
 
-| Aspect | Fixed 30s Window | Variable-Length (This Model) |
-|--------|------------------|------------------------------|
-| **Realism** | Partial view only | Full market view like real traders |
-| **Context** | No lifecycle awareness | Sees if token already pumped 500% |
-| **Time awareness** | Needs explicit feature | Implicit from sequence length |
-| **Pattern recognition** | Local patterns only | Global trends + local patterns |
-| **Training alignment** | Artificial constraint | Matches real trading exactly |
-| **Information** | Last 30 seconds | Entire history from discovery |
+
+
+---
+
+## Model Self-Improvement System
+
+### Core Philosophy: Continuous Learning
+
+The AI model MUST NOT operate with static parameters. After each token trading session, the model enters a **self-evaluation phase** to analyze performance and adjust strategy parameters dynamically.
+
+### Post-Trade Evaluation Workflow
+
+**After completing all trades on a token**, execute this workflow:
+
+#### 1. Performance Analysis
+
+```python
+def evaluate_token_performance(token_trades):
+    """
+    Analyze all trades executed on a single token.
+
+    Returns:
+        performance_metrics: Dict containing win_rate, avg_profit, max_drawdown, etc.
+    """
+    total_trades = len(token_trades)
+    winning_trades = [t for t in token_trades if t['profit'] > 0]
+    losing_trades = [t for t in token_trades if t['profit'] <= 0]
+
+    metrics = {
+        'win_rate': len(winning_trades) / total_trades,
+        'avg_profit': mean([t['profit'] for t in winning_trades]),
+        'avg_loss': mean([t['profit'] for t in losing_trades]),
+        'total_pnl': sum([t['profit'] for t in token_trades]),
+        'max_profit_missed': calculate_missed_opportunities(token_trades),
+        'premature_exits': count_premature_exits(token_trades),
+        'late_entries': count_late_entries(token_trades),
+    }
+
+    return metrics
+```
+
+#### 2. Parameter Adjustment Strategy
+
+Based on performance metrics, dynamically adjust take-profit and stop-loss thresholds:
+
+| Performance Pattern | Adjustment Action |
+|---------------------|-------------------|
+| **High win rate (>70%) but low avg profit** | Increase take-profit target by 5-10% |
+| **Low win rate (<50%) with high losses** | Tighten stop-loss by 1-2% |
+| **Many premature exits** | Increase take-profit, implement trailing stop |
+| **Many late entries** | Adjust entry signal sensitivity |
+| **Large missed opportunities** | Analyze exit timing, consider multi-stage exits |
+
+#### 3. Learning from Mistakes
+
+**Track and categorize trade failures:**
+
+| Failure Type | Cause | Recommended Fix |
+|--------------|-------|-----------------|
+| **Early Exit** | Hit take-profit too soon, price continued up | Increase take-profit OR use staged exits |
+| **Late Entry** | Bought near peak, immediate drawdown | Improve entry signal OR wait for deeper pullback |
+| **Whipsaw** | Stopped out then price recovered | Widen stop-loss OR reduce position size |
+| **Missed Reversal** | Didn't exit before major dump | Add reversal detection OR tighter trailing stop |
+
+#### 4. Rolling Performance Window
+
+Maintain a rolling window of the last 20-50 tokens to track long-term trends. If performance degrades over 10+ tokens (e.g., recent PnL < 80% of older PnL), trigger a parameter review or model retraining.
+
+#### 5. Parameter Bounds & Safety Limits
+
+**Never allow parameters to drift outside safe ranges:**
+
+```python
+PARAMETER_BOUNDS = {
+    'take_profit': (0.10, 0.80),      # Min 10%, Max 80%
+    'stop_loss': (-0.15, -0.03),      # Min -15%, Max -3%
+    'position_size': (0.005, 0.02),   # Min 0.005 SOL, Max 0.02 SOL
+    'max_trades_per_token': (2, 8),   # Min 2, Max 8
+    'confidence_threshold': (0.60, 0.90),  # Min 60%, Max 90%
+}
+```
 
 ---
 
