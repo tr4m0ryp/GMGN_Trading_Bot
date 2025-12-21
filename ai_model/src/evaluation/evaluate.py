@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from config import FIXED_POSITION_SIZE, TOTAL_FEE_PER_TX
-from data_preparation import calculate_net_profit, get_execution_price
+from data import calculate_net_profit, get_execution_price
 
 
 def backtest_token(model: nn.Module,

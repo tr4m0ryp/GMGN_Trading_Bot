@@ -3,7 +3,8 @@ LSTM model architecture for variable-length sequence trading.
 
 This module implements the VariableLengthLSTMTrader class, which processes
 entire price histories from token discovery using packed sequences for
-efficiency. The model outputs BUY/HOLD/SELL predictions with confidence scores.
+efficiency. The model outputs HOLD/BUY/SELL (0/1/2) predictions with confidence
+scores.
 
 Dependencies:
     torch: Deep learning framework
@@ -27,17 +28,17 @@ class VariableLengthLSTMTrader(nn.Module):
 
     This model processes the entire price history from token discovery
     to current time, using packed sequences for efficiency. Outputs
-    BUY/SELL/HOLD predictions with confidence scores.
+    HOLD/BUY/SELL (0/1/2) predictions with confidence scores.
 
     The architecture uses 2 LSTM layers with 128 hidden units, followed
-    by fully connected layers for classification. Dropout is applied for
-    regularization.
+    by fully connected layers for classification. Dropout is applied after
+    the first fully connected layer for regularization.
 
     Architecture:
         - LSTM layers: 2 layers with 128 hidden units each
-        - Dropout: 0.3 between LSTM and FC layers
+        - Dropout: 0.3 after FC1
         - FC layers: 128 -> 64 -> 3 classes
-        - Output: 3-class softmax (BUY/HOLD/SELL)
+        - Output: 3-class softmax (0=HOLD, 1=BUY, 2=SELL)
 
     Attributes:
         input_size: Number of input features per timestep.
@@ -46,7 +47,7 @@ class VariableLengthLSTMTrader(nn.Module):
         num_classes: Number of output classes.
         dropout: Dropout probability.
         lstm: LSTM module.
-        dropout_layer: Dropout layer.
+        dropout_layer: Dropout layer applied after FC1.
         fc1: First fully connected layer.
         relu: ReLU activation.
         fc2: Output layer.
@@ -56,7 +57,7 @@ class VariableLengthLSTMTrader(nn.Module):
             Features: OHLCV (5) + RSI + MACD + BB_upper + BB_lower + VWAP + Momentum
         hidden_size: LSTM hidden dimension. Default is 128.
         num_layers: Number of LSTM layers. Default is 2.
-        num_classes: Number of output classes. Default is 3 (BUY/HOLD/SELL).
+        num_classes: Number of output classes. Default is 3 (0=HOLD, 1=BUY, 2=SELL).
         dropout: Dropout probability. Default is 0.3.
 
     Example:
@@ -140,10 +141,9 @@ class VariableLengthLSTMTrader(nn.Module):
 
         last_hidden = hidden[-1]
 
-        x = self.dropout_layer(last_hidden)
-
-        x = self.fc1(x)
+        x = self.fc1(last_hidden)
         x = self.relu(x)
+        x = self.dropout_layer(x)
 
         logits = self.fc2(x)
 

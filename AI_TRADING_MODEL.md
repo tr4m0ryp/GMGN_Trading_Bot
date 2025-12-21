@@ -351,7 +351,7 @@ Trade 4-5 (Opportunistic):
 
 The model receives ALL historical data from token discovery to current timestamp, simulating real market conditions where traders see the full chart.
 
-### 1. Pattern Recognition (LSTM/Transformer with Variable Lengths)
+### 1. Pattern Recognition (LSTM with Variable Lengths)
 
 **Critical Insight:** Unlike traditional fixed-window approaches, this model sees the ENTIRE price history from token discovery, just like a real trader watching a live chart.
 
@@ -361,17 +361,11 @@ Input: All historical OHLCV data from discovery to current time (variable length
   - At T=60s:  Model sees 60 candles [0-59]
   - At T=200s: Model sees 200 candles [0-199]
 
-Architecture Option A (LSTM - Handles variable lengths natively):
+Architecture (LSTM - Handles variable lengths natively):
   - Input layer: (batch, seq_len, 11 features)
   - LSTM layers: 2-3 layers with 128-256 hidden units
   - Dropout: 0.2-0.3 for regularization
-  - Dense layers: Final classification (BUY/SELL/HOLD)
-
-Architecture Option B (Transformer - Better for long sequences):
-  - Input embedding: Project 11 features to d_model=128
-  - Positional encoding: Add temporal information
-  - Transformer encoder: 4-6 layers, 8 attention heads
-  - Output layer: Classification head
+  - Dense layers: Final classification (0=HOLD, 1=BUY, 2=SELL)
 
 Output: Trade signal + confidence score
 ```
@@ -634,7 +628,6 @@ print(f"Sequence lengths range from {MIN_HISTORY_LENGTH} to {max(s['seq_length']
 5. **Variable-Length Sequences**: Each sample has different length
    - Requires padding/masking for batching
    - LSTM handles natively with pack_padded_sequence
-   - Transformers use attention masks
 
 ## Model Implementation Examples
 
@@ -670,7 +663,7 @@ class VariableLengthLSTMTrader(nn.Module):
         self.fc1 = nn.Linear(hidden_size, 64)
         self.relu = nn.ReLU()
         self.dropout = nn.Dropout(0.3)
-        self.fc2 = nn.Linear(64, num_classes)  # BUY/HOLD/SELL
+        self.fc2 = nn.Linear(64, num_classes)  # 0=HOLD, 1=BUY, 2=SELL
         self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x, lengths):
@@ -731,117 +724,6 @@ def train_model(model, train_loader, criterion, optimizer, device):
         total_loss += loss.item()
 
     return total_loss / len(train_loader)
-```
-
-### Transformer Implementation (For Advanced Users)
-
-```python
-import torch
-import torch.nn as nn
-import math
-
-class PositionalEncoding(nn.Module):
-    """Add positional information to sequences."""
-    def __init__(self, d_model, max_len=1000):
-        super().__init__()
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
-
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        return x + self.pe[:, :x.size(1), :]
-
-class TransformerTrader(nn.Module):
-    """
-    Transformer-based trading model for variable-length sequences.
-    Better than LSTM for capturing long-range dependencies.
-    """
-    def __init__(self, input_size=11, d_model=128, nhead=8, num_layers=4, num_classes=3):
-        super().__init__()
-
-        # Project input features to d_model dimensions
-        self.input_projection = nn.Linear(input_size, d_model)
-
-        # Positional encoding
-        self.pos_encoder = PositionalEncoding(d_model)
-
-        # Transformer encoder
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=512,
-            dropout=0.3,
-            batch_first=True
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-
-        # Classification head
-        self.fc1 = nn.Linear(d_model, 64)
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.3)
-        self.fc2 = nn.Linear(64, num_classes)
-        self.softmax = nn.Softmax(dim=1)
-
-    def forward(self, x, mask=None):
-        """
-        Args:
-            x: (batch, seq_len, features)
-            mask: (batch, seq_len) - True for padding positions
-
-        Returns:
-            predictions: (batch, num_classes)
-            confidence: (batch,)
-        """
-        # Project to d_model
-        x = self.input_projection(x)  # (batch, seq_len, d_model)
-
-        # Add positional encoding
-        x = self.pos_encoder(x)
-
-        # Pass through transformer (mask prevents attention to padding)
-        x = self.transformer(x, src_key_padding_mask=mask)
-
-        # Use last non-padded timestep for prediction
-        if mask is not None:
-            # Get last valid position for each sequence
-            seq_lengths = (~mask).sum(dim=1) - 1
-            last_outputs = x[torch.arange(x.size(0)), seq_lengths]
-        else:
-            last_outputs = x[:, -1, :]  # Use last timestep
-
-        # Classification
-        out = self.fc1(last_outputs)
-        out = self.relu(out)
-        out = self.dropout(out)
-        logits = self.fc2(out)
-        predictions = self.softmax(logits)
-
-        confidence, _ = torch.max(predictions, dim=1)
-
-        return predictions, confidence
-
-# Create padding mask for transformer
-def create_padding_mask(lengths, max_len):
-    """
-    Create mask where True indicates padding positions.
-
-    Args:
-        lengths: (batch,) actual sequence lengths
-        max_len: maximum sequence length in batch
-
-    Returns:
-        mask: (batch, max_len) boolean tensor
-    """
-    batch_size = len(lengths)
-    mask = torch.arange(max_len).expand(batch_size, max_len)
-    mask = mask >= lengths.unsqueeze(1)
-    return mask
 ```
 
 ### Data Collation for Variable-Length Batching
@@ -1388,7 +1270,7 @@ python3 prepare_training_data.py
 
 This will create:
 - `data/processed/features_train.npy` - Training features (OHLCV + indicators)
-- `data/processed/labels_train.npy` - Labels (BUY/SELL/HOLD)
+- `data/processed/labels_train.npy` - Labels (0=HOLD, 1=BUY, 2=SELL)
 - `data/processed/features_test.npy` - Test features
 
 ### 2. Train the Model
@@ -1548,7 +1430,7 @@ Per day (assuming 50 tokens):
 2. ✅ Strategy documented
 3. ✅ Variable-length training approach designed
 4. **TODO:** Build data preprocessing pipeline with full historical context
-5. **TODO:** Implement LSTM/Transformer model for variable-length sequences
+5. **TODO:** Implement LSTM model for variable-length sequences
 6. **TODO:** Train model with realistic Jito fees and execution delays
 7. **TODO:** Backtest strategy on test dataset
 8. **TODO:** Paper trade for validation
@@ -1641,6 +1523,6 @@ A well-designed AI model with **Jito infrastructure** and **continuous self-impr
 *Key Changes:*
 - *Revolutionary variable-length sequence approach: model sees full price history from discovery*
 - *Replaced fixed 30-second windows with realistic live chart simulation*
-- *Added LSTM and Transformer implementations for variable-length sequences*
+- *Added LSTM implementation for variable-length sequences*
 - *Enhanced training methodology to exactly mimic real trading conditions*
 - *Previous: Jito Infrastructure integration, Model Self-Improvement framework*

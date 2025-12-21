@@ -4,36 +4,34 @@
 
 This directory contains ALL core model logic and utilities. Notebooks should ONLY import from here, never define models directly.
 
-## File Structure
+## Package Layout
 
-### data_preparation.py
+### config/
+Configuration management:
+- `DEFAULT_CONFIG` - Default configuration dictionary
+- `get_config()` - Get configuration with all hyperparameters
+- Trading constants (fees, position sizes, thresholds)
+
+### data/
 Data preprocessing and feature extraction:
-- `load_raw_data()` - Load CSV token data
-- `extract_features()` - Extract OHLCV + technical indicators
-- `prepare_realistic_training_data()` - Create training samples with full historical context
-- `split_data()` - Split into train/val/test sets
+- `preparation.py` - Load raw data, extract features, build datasets
+- `preprocess.py` - CLI preprocessing script for cached datasets
 
-### model_lstm.py
+### models/
 LSTM model architecture:
-- `VariableLengthLSTMTrader` - Main model class
+- `lstm.py` - `VariableLengthLSTMTrader`
 - Handles variable-length sequences with pack_padded_sequence
-- Outputs BUY/HOLD/SELL predictions with confidence scores
+- Outputs HOLD/BUY/SELL (0/1/2) predictions with confidence scores
 
-### train.py
+### training/
 Training logic:
-- `train_model()` - Main training loop
-- `validate()` - Validation function
-- `EarlyStopping` - Early stopping callback
-- Checkpoint saving
+- `train.py` - Training loop, validation, checkpointing
 
-### evaluate.py
+### evaluation/
 Evaluation and backtesting:
-- `evaluate_model()` - Calculate metrics on test set
-- `backtest()` - Realistic backtesting with fees
-- `calculate_sharpe_ratio()` - Risk-adjusted returns
-- Performance reporting
+- `evaluate.py` - Metrics, backtests, reporting
 
-### utils.py
+### utils/
 Helper functions:
 - `set_seed()` - Set random seeds for reproducibility
 - `save_checkpoint()` - Save model checkpoints
@@ -41,28 +39,48 @@ Helper functions:
 - `get_device()` - Get available device (CPU/CUDA)
 - Logging utilities
 
-### config.py
-Configuration management:
-- `DEFAULT_CONFIG` - Default configuration dictionary
-- `get_config()` - Get configuration with all hyperparameters
-- Trading constants (fees, position sizes, thresholds)
-
 ## Usage Example
 
 ```python
 # In notebook: notebooks/train_gpu.ipynb
-from src.model_lstm import VariableLengthLSTMTrader
-from src.train import train_model
-from src.data_preparation import load_training_data
+import torch
+from torch.utils.data import DataLoader
 
-# Load data
-train_data, val_data = load_training_data()
+from config import get_config
+from data import load_preprocessed_datasets, collate_variable_length
+from models import VariableLengthLSTMTrader
+from training import train_model
+
+# Load config and data
+config = get_config()
+train_ds, val_ds, _ = load_preprocessed_datasets('../data/processed')
+
+train_loader = DataLoader(
+    train_ds,
+    batch_size=config['training']['batch_size'],
+    shuffle=True,
+    collate_fn=collate_variable_length,
+)
+val_loader = DataLoader(
+    val_ds,
+    batch_size=config['training']['batch_size'],
+    shuffle=False,
+    collate_fn=collate_variable_length,
+)
 
 # Initialize model
 model = VariableLengthLSTMTrader().cuda()
 
 # Train
-train_model(model, train_data, val_data, device='cuda')
+train_model(model, train_loader, val_loader, config, device='cuda')
+```
+
+## CLI Scripts
+
+Run the preprocessing script from `ai_model/src`:
+
+```bash
+python -m data.preprocess --csv-path ../data/raw/rawdata.csv --output-dir ../data/processed
 ```
 
 ## Development Rules

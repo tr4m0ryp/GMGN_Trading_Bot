@@ -21,7 +21,7 @@ import sys
 
 import numpy as np
 
-from data_preparation import (
+from data import (
     load_raw_data,
     parse_candles,
     prepare_realistic_training_data,

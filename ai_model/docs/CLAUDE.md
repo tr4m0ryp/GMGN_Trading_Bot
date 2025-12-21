@@ -20,14 +20,15 @@ This project focuses on **Python with PyTorch** for deep learning model developm
 
 ## Project Overview
 
-This directory contains the **AI Trading Model** for GMGN token trading. The model uses variable-length LSTM architecture to predict optimal BUY/SELL/HOLD signals based on full historical price data.
+This directory contains the **AI Trading Model** for GMGN token trading. The model uses variable-length LSTM architecture to predict optimal HOLD/BUY/SELL (0/1/2) signals based on full historical price data.
 
 ## Directory Structure
 
 ```
 ai_model/
-├── CLAUDE.md              # This file - development guidelines
-├── MODEL_DESIGN.md        # Model architecture and design specification
+├── docs/                  # Model documentation
+│   ├── CLAUDE.md           # Development guidelines
+│   └── MODEL_DESIGN.md     # Model architecture specification
 ├── data/                  # Input data directory
 │   ├── raw/               # Raw CSV token data
 │   ├── processed/         # Processed training data (features, labels)
@@ -35,15 +36,25 @@ ai_model/
 ├── models/                # Saved model weights and checkpoints
 │   ├── checkpoints/       # Training checkpoints
 │   └── best_model.pth     # Best performing model
-├── src/                   # Python source files (CORE MODEL CODE)
-│   ├── data_preparation.py    # Data preprocessing and feature extraction
-│   ├── model_lstm.py          # LSTM model architecture
-│   ├── train.py               # Training logic
-│   ├── evaluate.py            # Evaluation and backtesting
-│   ├── utils.py               # Helper functions
-│   └── config.py              # Configuration management
-└── notebooks/             # Jupyter notebooks (GPU ACCESS ONLY)
-    └── train_gpu.ipynb    # Notebook wrapper for GPU training
+├── notebooks/             # Jupyter notebooks (GPU ACCESS ONLY)
+│   └── train_gpu.ipynb    # Notebook wrapper for GPU training
+├── requirements.txt       # Python dependencies
+└── src/                   # Python source files (CORE MODEL CODE)
+    ├── config/            # Configuration management
+    │   └── __init__.py
+    ├── data/              # Data preparation
+    │   ├── preparation.py # Feature extraction + dataset building
+    │   └── preprocess.py  # CLI preprocessing script
+    ├── evaluation/        # Evaluation and backtesting
+    │   └── evaluate.py
+    ├── models/            # Model architectures
+    │   └── lstm.py
+    ├── training/          # Training loops
+    │   └── train.py
+    ├── utils/             # Shared helpers
+    │   └── __init__.py
+    ├── __init__.py
+    └── README.md
 ```
 
 ## Critical Architecture Rules
@@ -63,18 +74,31 @@ ai_model/
 **Example (CORRECT):**
 ```python
 # notebooks/train_gpu.ipynb
-from src.model_lstm import VariableLengthLSTMTrader
-from src.train import train_model
-from src.data_preparation import load_training_data
+from torch.utils.data import DataLoader
 
-# Load data
-train_data, val_data = load_training_data()
+from config import get_config
+from data import load_preprocessed_datasets, collate_variable_length
+from models import VariableLengthLSTMTrader
+from training import train_model
 
-# Initialize model
+config = get_config()
+train_ds, val_ds, _ = load_preprocessed_datasets('../data/processed')
+
+train_loader = DataLoader(
+    train_ds,
+    batch_size=config['training']['batch_size'],
+    shuffle=True,
+    collate_fn=collate_variable_length,
+)
+val_loader = DataLoader(
+    val_ds,
+    batch_size=config['training']['batch_size'],
+    shuffle=False,
+    collate_fn=collate_variable_length,
+)
+
 model = VariableLengthLSTMTrader().cuda()
-
-# Train (function defined in src/train.py)
-train_model(model, train_data, val_data, device='cuda')
+train_model(model, train_loader, val_loader, config, device='cuda')
 ```
 
 **Example (WRONG):**
@@ -155,7 +179,7 @@ class LSTMModel(nn.Module):  # ❌ WRONG - should be in src/
 
 ### 4. File Organization Rules
 
-#### src/data_preparation.py
+#### src/data/preparation.py
 ```python
 """Data preprocessing and feature extraction."""
 
@@ -172,7 +196,7 @@ def prepare_realistic_training_data(token_candles: List[Dict]) -> List[Dict]:
     pass
 ```
 
-#### src/model_lstm.py
+#### src/models/lstm.py
 ```python
 """LSTM model for variable-length sequence trading."""
 
@@ -190,7 +214,7 @@ class VariableLengthLSTMTrader(nn.Module):
         pass
 ```
 
-#### src/train.py
+#### src/training/train.py
 ```python
 """Training logic and utilities."""
 
@@ -236,7 +260,8 @@ LSTM model architecture for variable-length sequence trading.
 
 This module implements the VariableLengthLSTMTrader class, which processes
 entire price histories from token discovery using packed sequences for
-efficiency. The model outputs BUY/HOLD/SELL predictions with confidence scores.
+efficiency. The model outputs HOLD/BUY/SELL (0/1/2) predictions with confidence
+scores.
 
 Dependencies:
     torch: Deep learning framework
@@ -324,17 +349,17 @@ class VariableLengthLSTMTrader(nn.Module):
 
     This model processes the entire price history from token discovery
     to current time, using packed sequences for efficiency. Outputs
-    BUY/SELL/HOLD predictions with confidence scores.
+    HOLD/BUY/SELL (0/1/2) predictions with confidence scores.
 
     The architecture uses 2 LSTM layers with 128 hidden units, followed
-    by fully connected layers for classification. Dropout is applied for
-    regularization.
+    by fully connected layers for classification. Dropout is applied after
+    the first fully connected layer for regularization.
 
     Architecture:
         - LSTM layers: 2 layers with 128 hidden units each
-        - Dropout: 0.3 between LSTM and FC layers
+        - Dropout: 0.3 after FC1
         - FC layers: 128 -> 64 -> 3 classes
-        - Output: 3-class softmax (BUY/HOLD/SELL)
+        - Output: 3-class softmax (0=HOLD, 1=BUY, 2=SELL)
 
     Attributes:
         hidden_size: LSTM hidden dimension
@@ -348,7 +373,7 @@ class VariableLengthLSTMTrader(nn.Module):
             Features: OHLCV (5) + RSI + MACD + BB_upper + BB_lower + VWAP + Momentum
         hidden_size: LSTM hidden dimension. Default is 128.
         num_layers: Number of LSTM layers. Default is 2.
-        num_classes: Number of output classes. Default is 3 (BUY/HOLD/SELL).
+        num_classes: Number of output classes. Default is 3 (0=HOLD, 1=BUY, 2=SELL).
 
     Example:
         >>> model = VariableLengthLSTMTrader(input_size=11, hidden_size=256)
@@ -477,7 +502,7 @@ pip install numpy pandas scikit-learn
 Use configuration dictionaries or YAML files:
 
 ```python
-# src/config.py
+# src/config/__init__.py
 DEFAULT_CONFIG = {
     'model': {
         'type': 'lstm',
@@ -567,18 +592,18 @@ def set_seed(seed: int = 42):
 
 ## Model Development Workflow
 
-1. **Data Preparation** (`src/data_preparation.py`)
+1. **Data Preparation** (`src/data/preparation.py`)
    - Load raw CSV data
    - Extract features with full historical context
    - Create train/val/test splits
    - Save processed data
 
-2. **Model Implementation** (`src/model_lstm.py`)
+2. **Model Implementation** (`src/models/lstm.py`)
    - Define LSTM model architecture
    - Implement forward pass with packed sequences
    - Add prediction methods with confidence scoring
 
-3. **Training Setup** (`src/train.py`)
+3. **Training Setup** (`src/training/train.py`)
    - Define training loop
    - Implement validation
    - Add checkpointing and early stopping
@@ -589,7 +614,7 @@ def set_seed(seed: int = 42):
    - Call training functions
    - Monitor on GPU
 
-5. **Evaluation** (`src/evaluate.py`)
+5. **Evaluation** (`src/evaluation/evaluate.py`)
    - Backtest on test set
    - Calculate performance metrics
    - Generate reports

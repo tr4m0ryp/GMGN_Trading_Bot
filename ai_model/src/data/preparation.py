@@ -567,7 +567,7 @@ def load_preprocessed_datasets(processed_dir: str) -> Tuple[TradingDataset,
     Load preprocessed datasets from disk.
 
     Loads train/val/test datasets that were previously processed and saved
-    by the preprocess_data.py script. This is much faster than processing
+    by the data/preprocess.py script. This is much faster than processing
     from raw CSV each time.
 
     Args:

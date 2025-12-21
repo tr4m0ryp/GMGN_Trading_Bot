@@ -36,7 +36,7 @@ Dense Layers:
   - FC1: hidden_size -> 64
   - ReLU activation
   - Dropout: 0.3
-  - FC2: 64 -> 3 (BUY/HOLD/SELL)
+  - FC2: 64 -> 3 (0=HOLD, 1=BUY, 2=SELL)
   - Softmax output
 
 Output:
