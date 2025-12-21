@@ -40,7 +40,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     'training': {
         'batch_size': 64,
-        'learning_rate': 0.001,
+        'learning_rate': 0.003,
         'epochs': 100,
         'early_stopping_patience': 10,
         'gradient_clip_value': 1.0,

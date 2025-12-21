@@ -150,6 +150,43 @@ def validate(model: nn.Module,
     return avg_loss, accuracy
 
 
+def compute_class_weights(train_loader: DataLoader,
+                         num_classes: int,
+                         device: str) -> torch.Tensor:
+    """
+    Compute class weights for imbalanced datasets.
+
+    Uses inverse class frequency weighting to handle class imbalance.
+    Weights are normalized so they average to 1.0.
+
+    Args:
+        train_loader: DataLoader for training data.
+        num_classes: Number of classes.
+        device: Device to place weights on.
+
+    Returns:
+        Tensor of class weights of shape (num_classes,).
+
+    Example:
+        >>> weights = compute_class_weights(train_loader, 3, 'cuda')
+        >>> print(f"Class weights: {weights}")
+    """
+    class_counts = torch.zeros(num_classes)
+
+    for batch in train_loader:
+        labels = batch['labels']
+        for i in range(num_classes):
+            class_counts[i] += (labels == i).sum().item()
+
+    total_samples = class_counts.sum()
+    class_weights = total_samples / (num_classes * class_counts)
+
+    # Normalize weights so they average to 1.0
+    class_weights = class_weights / class_weights.mean()
+
+    return class_weights.to(device)
+
+
 def train_model(model: nn.Module,
                train_loader: DataLoader,
                val_loader: DataLoader,
@@ -160,6 +197,7 @@ def train_model(model: nn.Module,
     Train the model with early stopping and checkpointing.
 
     Implements full training loop with:
+    - Class weighting for imbalanced datasets
     - Mixed precision training (if enabled)
     - Gradient accumulation
     - Early stopping
@@ -199,7 +237,13 @@ def train_model(model: nn.Module,
     use_mixed_precision = training_config['use_mixed_precision']
     accumulation_steps = training_config['accumulation_steps']
 
-    criterion = nn.CrossEntropyLoss()
+    # Compute class weights to handle class imbalance
+    num_classes = config['model']['num_classes']
+    print("Computing class weights from training data...")
+    class_weights = compute_class_weights(train_loader, num_classes, device)
+    print(f"Class weights: {class_weights.cpu().numpy()}")
+
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=learning_rate,
