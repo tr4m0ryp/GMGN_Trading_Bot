@@ -21,7 +21,10 @@ import sys
 
 import numpy as np
 
-from data import (
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from data.preparation import (
     load_raw_data,
     parse_candles,
     prepare_realistic_training_data,
