@@ -2,8 +2,9 @@
 models/*.pth
 models/checkpoints/*.pth
 
-# Processed data
-data/processed/
+# Large processed data files (keep metadata and smaller files)
+# Commented out to allow processed data to be committed
+# data/processed/
 data/test/
 
 # Jupyter notebook outputs
