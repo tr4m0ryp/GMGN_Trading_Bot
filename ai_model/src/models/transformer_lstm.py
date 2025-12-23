@@ -48,17 +48,19 @@ class PositionalEncoding(nn.Module):
 
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model)
+        )
 
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0)
 
-        self.register_buffer('pe', pe)
+        self.register_buffer("pe", pe)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Add positional encoding to input tensor."""
-        x = x + self.pe[:, :x.size(1), :]
+        x = x + self.pe[:, : x.size(1), :]
         return self.dropout(x)
 
 
@@ -122,15 +124,13 @@ class TransformerEncoderBlock(nn.Module):
         dropout: Dropout probability. Default is 0.1.
     """
 
-    def __init__(self,
-                 d_model: int,
-                 n_heads: int,
-                 d_ff: int,
-                 dropout: float = 0.1):
+    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float = 0.1):
         super().__init__()
 
         self.norm1 = nn.LayerNorm(d_model)
-        self.attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+        self.attn = nn.MultiheadAttention(
+            d_model, n_heads, dropout=dropout, batch_first=True
+        )
         self.dropout1 = nn.Dropout(dropout)
 
         self.norm2 = nn.LayerNorm(d_model)
@@ -139,12 +139,12 @@ class TransformerEncoderBlock(nn.Module):
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(d_ff, d_model),
-            nn.Dropout(dropout)
+            nn.Dropout(dropout),
         )
 
-    def forward(self,
-                x: torch.Tensor,
-                mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         """
         Forward pass through transformer encoder block.
 
@@ -206,15 +206,17 @@ class AdvancedTransformerLSTMTrader(nn.Module):
         >>> print(f"Params: {sum(p.numel() for p in model.parameters()):,}")
     """
 
-    def __init__(self,
-                 input_size: int = 14,
-                 hidden_size: int = 512,
-                 num_lstm_layers: int = 3,
-                 num_transformer_layers: int = 4,
-                 num_heads: int = 8,
-                 num_classes: int = 3,
-                 dropout: float = 0.3,
-                 ff_mult: int = 4):
+    def __init__(
+        self,
+        input_size: int = 14,
+        hidden_size: int = 512,
+        num_lstm_layers: int = 3,
+        num_transformer_layers: int = 4,
+        num_heads: int = 8,
+        num_classes: int = 3,
+        dropout: float = 0.3,
+        ff_mult: int = 4,
+    ):
         super().__init__()
 
         self.input_size = input_size
@@ -236,29 +238,33 @@ class AdvancedTransformerLSTMTrader(nn.Module):
             num_layers=num_lstm_layers,
             batch_first=True,
             dropout=dropout if num_lstm_layers > 1 else 0.0,
-            bidirectional=True
+            bidirectional=True,
         )
         self.lstm_norm = nn.LayerNorm(hidden_size)
 
         # Positional encoding
-        self.pos_encoder = PositionalEncoding(hidden_size, max_len=1000, dropout=dropout)
+        self.pos_encoder = PositionalEncoding(
+            hidden_size, max_len=1000, dropout=dropout
+        )
 
         # Transformer encoder layers
-        self.transformer_layers = nn.ModuleList([
-            TransformerEncoderBlock(
-                d_model=hidden_size,
-                n_heads=num_heads,
-                d_ff=hidden_size * ff_mult,
-                dropout=dropout
-            )
-            for _ in range(num_transformer_layers)
-        ])
+        self.transformer_layers = nn.ModuleList(
+            [
+                TransformerEncoderBlock(
+                    d_model=hidden_size,
+                    n_heads=num_heads,
+                    d_ff=hidden_size * ff_mult,
+                    dropout=dropout,
+                )
+                for _ in range(num_transformer_layers)
+            ]
+        )
 
         # Temporal attention pooling
         self.temporal_attn = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.Tanh(),
-            nn.Linear(hidden_size // 2, 1)
+            nn.Linear(hidden_size // 2, 1),
         )
 
         # Classification head with residual
@@ -271,7 +277,7 @@ class AdvancedTransformerLSTMTrader(nn.Module):
             nn.LayerNorm(hidden_size // 2),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_size // 2, num_classes)
+            nn.Linear(hidden_size // 2, num_classes),
         )
 
         # Initialize weights
@@ -280,17 +286,17 @@ class AdvancedTransformerLSTMTrader(nn.Module):
     def _init_weights(self):
         """Initialize weights using Xavier/Kaiming initialization."""
         for name, param in self.named_parameters():
-            if 'weight' in name and param.dim() >= 2:
-                if 'lstm' in name:
+            if "weight" in name and param.dim() >= 2:
+                if "lstm" in name:
                     nn.init.orthogonal_(param)
                 else:
                     nn.init.xavier_uniform_(param)
-            elif 'bias' in name:
+            elif "bias" in name:
                 nn.init.zeros_(param)
 
-    def forward(self,
-                x: torch.Tensor,
-                lengths: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor, lengths: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass through the model.
 
@@ -319,7 +325,7 @@ class AdvancedTransformerLSTMTrader(nn.Module):
             x,
             lengths.cpu().clamp(max=max_seq_len),
             batch_first=True,
-            enforce_sorted=False
+            enforce_sorted=False,
         )
 
         # Bidirectional LSTM
@@ -331,7 +337,9 @@ class AdvancedTransformerLSTMTrader(nn.Module):
         x = self.pos_encoder(x)
 
         # Create padding mask for transformer
-        mask = torch.arange(x.size(1), device=device).unsqueeze(0) >= lengths.unsqueeze(1)
+        mask = torch.arange(x.size(1), device=x.device).unsqueeze(
+            0
+        ) >= lengths.unsqueeze(1)
 
         # Transformer encoder layers
         for transformer_layer in self.transformer_layers:
@@ -339,11 +347,13 @@ class AdvancedTransformerLSTMTrader(nn.Module):
 
         # Temporal attention pooling
         attn_scores = self.temporal_attn(x).squeeze(-1)  # (batch, seq_len)
-        attn_scores = attn_scores.masked_fill(mask, float('-inf'))
+        attn_scores = attn_scores.masked_fill(mask, float("-inf"))
         attn_weights = F.softmax(attn_scores, dim=1)
 
         # Weighted sum
-        context = torch.bmm(attn_weights.unsqueeze(1), x).squeeze(1)  # (batch, hidden_size)
+        context = torch.bmm(attn_weights.unsqueeze(1), x).squeeze(
+            1
+        )  # (batch, hidden_size)
 
         # Classification
         logits = self.classifier(context)
@@ -354,10 +364,9 @@ class AdvancedTransformerLSTMTrader(nn.Module):
 
         return logits, confidence
 
-    def predict(self,
-                x: torch.Tensor,
-                lengths: torch.Tensor,
-                confidence_threshold: float = 0.7) -> Tuple[torch.Tensor, torch.Tensor]:
+    def predict(
+        self, x: torch.Tensor, lengths: torch.Tensor, confidence_threshold: float = 0.7
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Make predictions with confidence filtering.
 
@@ -382,9 +391,9 @@ class AdvancedTransformerLSTMTrader(nn.Module):
 
         return actions, confidence
 
-    def get_attention_weights(self,
-                              x: torch.Tensor,
-                              lengths: torch.Tensor) -> torch.Tensor:
+    def get_attention_weights(
+        self, x: torch.Tensor, lengths: torch.Tensor
+    ) -> torch.Tensor:
         """
         Get temporal attention weights for visualization.
 
@@ -410,7 +419,7 @@ class AdvancedTransformerLSTMTrader(nn.Module):
                 x,
                 lengths.cpu().clamp(max=max_seq_len),
                 batch_first=True,
-                enforce_sorted=False
+                enforce_sorted=False,
             )
             lstm_out, _ = self.lstm(packed)
             lstm_out, _ = pad_packed_sequence(lstm_out, batch_first=True)
@@ -418,13 +427,15 @@ class AdvancedTransformerLSTMTrader(nn.Module):
             x = self.lstm_norm(lstm_out)
             x = self.pos_encoder(x)
 
-            mask = torch.arange(x.size(1), device=device).unsqueeze(0) >= lengths.unsqueeze(1)
+            mask = torch.arange(x.size(1), device=device).unsqueeze(
+                0
+            ) >= lengths.unsqueeze(1)
 
             for transformer_layer in self.transformer_layers:
                 x = transformer_layer(x, mask)
 
             attn_scores = self.temporal_attn(x).squeeze(-1)
-            attn_scores = attn_scores.masked_fill(mask, float('-inf'))
+            attn_scores = attn_scores.masked_fill(mask, float("-inf"))
             attn_weights = F.softmax(attn_scores, dim=1)
 
         return attn_weights
@@ -451,13 +462,15 @@ class LightweightTransformerTrader(nn.Module):
         >>> logits, confidence = model(features, lengths)
     """
 
-    def __init__(self,
-                 input_size: int = 14,
-                 hidden_size: int = 256,
-                 num_layers: int = 6,
-                 num_heads: int = 8,
-                 num_classes: int = 3,
-                 dropout: float = 0.2):
+    def __init__(
+        self,
+        input_size: int = 14,
+        hidden_size: int = 256,
+        num_layers: int = 6,
+        num_heads: int = 8,
+        num_classes: int = 3,
+        dropout: float = 0.2,
+    ):
         super().__init__()
 
         self.input_size = input_size
@@ -469,11 +482,13 @@ class LightweightTransformerTrader(nn.Module):
             nn.Linear(input_size, hidden_size),
             nn.LayerNorm(hidden_size),
             nn.GELU(),
-            nn.Dropout(dropout)
+            nn.Dropout(dropout),
         )
 
         # Positional encoding
-        self.pos_encoder = PositionalEncoding(hidden_size, max_len=1000, dropout=dropout)
+        self.pos_encoder = PositionalEncoding(
+            hidden_size, max_len=1000, dropout=dropout
+        )
 
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
@@ -481,9 +496,9 @@ class LightweightTransformerTrader(nn.Module):
             nhead=num_heads,
             dim_feedforward=hidden_size * 4,
             dropout=dropout,
-            activation='gelu',
+            activation="gelu",
             batch_first=True,
-            norm_first=True
+            norm_first=True,
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
@@ -491,7 +506,7 @@ class LightweightTransformerTrader(nn.Module):
         self.temporal_attn = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.Tanh(),
-            nn.Linear(hidden_size // 2, 1)
+            nn.Linear(hidden_size // 2, 1),
         )
 
         # Classification head
@@ -500,12 +515,12 @@ class LightweightTransformerTrader(nn.Module):
             nn.LayerNorm(hidden_size // 2),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_size // 2, num_classes)
+            nn.Linear(hidden_size // 2, num_classes),
         )
 
-    def forward(self,
-                x: torch.Tensor,
-                lengths: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor, lengths: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass through the model."""
         device = x.device
         max_seq_len = x.size(1)
@@ -517,14 +532,16 @@ class LightweightTransformerTrader(nn.Module):
         x = self.pos_encoder(x)
 
         # Create padding mask
-        mask = torch.arange(max_seq_len, device=device).unsqueeze(0) >= lengths.unsqueeze(1)
+        mask = torch.arange(max_seq_len, device=device).unsqueeze(
+            0
+        ) >= lengths.unsqueeze(1)
 
         # Transformer encoder
         x = self.transformer(x, src_key_padding_mask=mask)
 
         # Temporal attention pooling
         attn_scores = self.temporal_attn(x).squeeze(-1)
-        attn_scores = attn_scores.masked_fill(mask, float('-inf'))
+        attn_scores = attn_scores.masked_fill(mask, float("-inf"))
         attn_weights = F.softmax(attn_scores, dim=1)
 
         context = torch.bmm(attn_weights.unsqueeze(1), x).squeeze(1)
@@ -537,10 +554,9 @@ class LightweightTransformerTrader(nn.Module):
 
         return logits, confidence
 
-    def predict(self,
-                x: torch.Tensor,
-                lengths: torch.Tensor,
-                confidence_threshold: float = 0.7) -> Tuple[torch.Tensor, torch.Tensor]:
+    def predict(
+        self, x: torch.Tensor, lengths: torch.Tensor, confidence_threshold: float = 0.7
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Make predictions with confidence filtering."""
         self.eval()
 
