@@ -320,10 +320,11 @@ class AdvancedTransformerLSTMTrader(nn.Module):
         x = self.input_proj(x)
         x = self.input_norm(x)
 
-        # Pack for LSTM
+        # Pack for LSTM - ensure lengths are valid (at least 1, at most max_seq_len)
+        valid_lengths = lengths.cpu().clamp(min=1, max=max_seq_len)
         packed = pack_padded_sequence(
             x,
-            lengths.cpu().clamp(max=max_seq_len),
+            valid_lengths,
             batch_first=True,
             enforce_sorted=False,
         )
@@ -415,9 +416,10 @@ class AdvancedTransformerLSTMTrader(nn.Module):
             x = self.input_proj(x)
             x = self.input_norm(x)
 
+            valid_lengths = lengths.cpu().clamp(min=1, max=max_seq_len)
             packed = pack_padded_sequence(
                 x,
-                lengths.cpu().clamp(max=max_seq_len),
+                valid_lengths,
                 batch_first=True,
                 enforce_sorted=False,
             )
