@@ -499,7 +499,17 @@ def compute_class_weights(train_loader: DataLoader,
             class_counts[i] += (labels == i).sum().item()
 
     total_samples = class_counts.sum()
+    
+    # Debug: Print class distribution
+    class_names = ['HOLD', 'BUY', 'SELL']
+    print(f"\nClass distribution in training data:")
+    for i in range(num_classes):
+        pct = class_counts[i] / total_samples * 100
+        print(f"  {class_names[i]} ({i}): {int(class_counts[i]):,} samples ({pct:.1f}%)")
+    
     class_weights = total_samples / (num_classes * class_counts)
+    
+    print(f"\nRaw class weights (before smoothing): {class_weights.cpu().numpy()}")
 
     # Apply smoothing: move weights toward 1.0
     class_weights = class_weights * (1 - smoothing) + smoothing
