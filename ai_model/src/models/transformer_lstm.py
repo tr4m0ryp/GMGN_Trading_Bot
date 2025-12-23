@@ -25,7 +25,6 @@ from typing import Tuple, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
 class PositionalEncoding(nn.Module):
@@ -313,9 +312,8 @@ class AdvancedTransformerLSTMTrader(nn.Module):
         max_seq_len = x.size(1)
         device = x.device
 
-        # Move lengths to device for mask creation, keep CPU copy for pack_padded_sequence
-        lengths_device = lengths.to(device)
-        lengths_cpu = lengths.cpu().clamp(min=1, max=max_seq_len)
+        # Move lengths to device for mask creation
+        lengths_device = lengths.to(device).clamp(min=1, max=max_seq_len)
 
         # Multi-scale convolution
         x = self.multi_scale_conv(x)
@@ -324,23 +322,15 @@ class AdvancedTransformerLSTMTrader(nn.Module):
         x = self.input_proj(x)
         x = self.input_norm(x)
 
-        # Pack for LSTM - pack_padded_sequence requires CPU lengths
-        packed = pack_padded_sequence(
-            x,
-            lengths_cpu,
-            batch_first=True,
-            enforce_sorted=False,
-        )
-
-        # Bidirectional LSTM
-        lstm_out, _ = self.lstm(packed)
-        lstm_out, _ = pad_packed_sequence(lstm_out, batch_first=True)
+        # Bidirectional LSTM (run on padded sequences - compatible with autocast)
+        # Note: Not using pack_padded_sequence for mixed precision compatibility
+        lstm_out, _ = self.lstm(x)
 
         # Normalize and add positional encoding
         x = self.lstm_norm(lstm_out)
         x = self.pos_encoder(x)
 
-        # Create padding mask for transformer (use device lengths)
+        # Create padding mask for transformer
         mask = torch.arange(x.size(1), device=device).unsqueeze(
             0
         ) >= lengths_device.unsqueeze(1)
@@ -415,22 +405,15 @@ class AdvancedTransformerLSTMTrader(nn.Module):
             max_seq_len = x.size(1)
             device = x.device
 
-            # Move lengths to device for mask creation, keep CPU copy for pack_padded_sequence
-            lengths_device = lengths.to(device)
-            lengths_cpu = lengths.cpu().clamp(min=1, max=max_seq_len)
+            # Move lengths to device for mask creation
+            lengths_device = lengths.to(device).clamp(min=1, max=max_seq_len)
 
             x = self.multi_scale_conv(x)
             x = self.input_proj(x)
             x = self.input_norm(x)
 
-            packed = pack_padded_sequence(
-                x,
-                lengths_cpu,
-                batch_first=True,
-                enforce_sorted=False,
-            )
-            lstm_out, _ = self.lstm(packed)
-            lstm_out, _ = pad_packed_sequence(lstm_out, batch_first=True)
+            # Bidirectional LSTM (run on padded sequences)
+            lstm_out, _ = self.lstm(x)
 
             x = self.lstm_norm(lstm_out)
             x = self.pos_encoder(x)
