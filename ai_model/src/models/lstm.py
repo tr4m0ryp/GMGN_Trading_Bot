@@ -53,15 +53,15 @@ class VariableLengthLSTMTrader(nn.Module):
         fc2: Output layer.
 
     Args:
-        input_size: Number of features per timestep. Default is 11.
-            Features: OHLCV (5) + RSI + MACD + BB_upper + BB_lower + VWAP + Momentum
+        input_size: Number of features per timestep. Default is 15.
+            Features: engineered price/volume returns, indicator deltas, readiness masks, position flag.
         hidden_size: LSTM hidden dimension. Default is 128.
         num_layers: Number of LSTM layers. Default is 2.
         num_classes: Number of output classes. Default is 3 (0=HOLD, 1=BUY, 2=SELL).
         dropout: Dropout probability. Default is 0.3.
 
     Example:
-        >>> model = VariableLengthLSTMTrader(input_size=11, hidden_size=256)
+        >>> model = VariableLengthLSTMTrader(input_size=15, hidden_size=256)
         >>> model = model.cuda()
         >>> predictions, confidence = model(features, lengths)
         >>> print(predictions.shape)
@@ -75,7 +75,7 @@ class VariableLengthLSTMTrader(nn.Module):
     """
 
     def __init__(self,
-                 input_size: int = 11,
+                 input_size: int = 15,
                  hidden_size: int = 128,
                  num_layers: int = 2,
                  num_classes: int = 3,
@@ -110,16 +110,16 @@ class VariableLengthLSTMTrader(nn.Module):
         Forward pass through the model.
 
         Processes variable-length sequences using packed sequences for efficiency.
-        Returns class probabilities and confidence scores.
+        Returns logits (for CE/focal) and confidence scores.
 
         Args:
             x: Padded input sequences of shape (batch, max_seq_len, input_size).
             lengths: Actual sequence lengths of shape (batch,).
 
         Returns:
-            Tuple of (predictions, confidence):
-                - predictions: Class probabilities of shape (batch, num_classes).
-                - confidence: Maximum probability per sample of shape (batch,).
+            Tuple of (logits, confidence):
+                - logits: Raw class scores of shape (batch, num_classes).
+                - confidence: Maximum softmax probability per sample of shape (batch,).
 
         Example:
             >>> x = torch.randn(32, 150, 11)
@@ -147,11 +147,10 @@ class VariableLengthLSTMTrader(nn.Module):
 
         logits = self.fc2(x)
 
-        predictions = torch.softmax(logits, dim=1)
+        probs = torch.softmax(logits, dim=1)
+        confidence = torch.max(probs, dim=1)[0]
 
-        confidence = torch.max(predictions, dim=1)[0]
-
-        return predictions, confidence
+        return logits, confidence
 
     def predict(self,
                x: torch.Tensor,

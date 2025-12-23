@@ -30,8 +30,10 @@ from config import (
     DELAY_SECONDS,
     TOTAL_FEE_PER_TX,
     MIN_HISTORY_LENGTH,
-    BUY_THRESHOLD,
-    HOLD_THRESHOLD,
+    LOOKAHEAD_SECONDS,
+    TAKE_PROFIT_PCT,
+    STOP_LOSS_PCT,
+    TRAIL_BACKOFF_PCT,
 )
 
 
@@ -242,102 +244,38 @@ def calculate_momentum(prices: np.ndarray, period: int = 10) -> np.ndarray:
     return momentum
 
 
-def normalize_features(features: np.ndarray) -> np.ndarray:
-    """
-    Normalize features to prevent numerical instability.
-
-    Applies normalization strategies appropriate for each feature type:
-    - Prices (OHLC): Normalized to percentage change from first price
-    - Volume: Log-normalized
-    - RSI: Scaled to 0-1 range (from 0-100)
-    - MACD: Normalized by current price
-    - Bollinger Bands: Normalized by current price
-    - VWAP: Normalized by current price
-    - Momentum: Already in percentage form, kept as-is
-
-    Args:
-        features: Raw feature array of shape (seq_len, 11).
-
-    Returns:
-        Normalized feature array with NaN/Inf replaced by 0.
-
-    Note:
-        This prevents gradient explosion and NaN losses during training.
-    """
-    normalized = features.copy()
-
-    # Extract feature columns
-    opens = features[:, 0]
-    highs = features[:, 1]
-    lows = features[:, 2]
-    closes = features[:, 3]
-    volumes = features[:, 4]
-    rsi = features[:, 5]
-    macd = features[:, 6]
-    bb_upper = features[:, 7]
-    bb_lower = features[:, 8]
-    vwap = features[:, 9]
-    momentum = features[:, 10]
-
-    # Normalize OHLC: percentage change from first price
-    first_price = closes[0] if closes[0] != 0 else 1.0
-    normalized[:, 0] = (opens - first_price) / first_price
-    normalized[:, 1] = (highs - first_price) / first_price
-    normalized[:, 2] = (lows - first_price) / first_price
-    normalized[:, 3] = (closes - first_price) / first_price
-
-    # Normalize volume: log transform with small epsilon to avoid log(0)
-    normalized[:, 4] = np.log1p(volumes)
-
-    # Normalize RSI: scale to 0-1 from 0-100
-    normalized[:, 5] = rsi / 100.0
-
-    # Normalize MACD by current price
-    normalized[:, 6] = np.where(closes != 0, macd / closes, 0)
-
-    # Normalize Bollinger Bands by current price
-    normalized[:, 7] = np.where(closes != 0, (bb_upper - closes) / closes, 0)
-    normalized[:, 8] = np.where(closes != 0, (bb_lower - closes) / closes, 0)
-
-    # Normalize VWAP by current price
-    normalized[:, 9] = np.where(closes != 0, (vwap - closes) / closes, 0)
-
-    # Momentum is already in percentage form, keep as-is
-    normalized[:, 10] = momentum
-
-    # Replace any remaining NaN or Inf values with 0
-    normalized = np.nan_to_num(normalized, nan=0.0, posinf=0.0, neginf=0.0)
-
-    return normalized.astype(np.float32)
+def _log_return(series: np.ndarray, lag: int) -> np.ndarray:
+    """Compute log returns with a given lag, padding the front with zeros."""
+    safe = np.clip(series, 1e-8, None)
+    logs = np.log(safe)
+    shifted = np.concatenate([np.full(lag, logs[0]), logs[:-lag]]) if len(series) > lag else np.full(len(series), logs[0])
+    return logs - shifted
 
 
 def extract_features(candles: List[Dict[str, float]]) -> np.ndarray:
     """
-    Extract OHLCV and technical indicators from candles.
+    Extract features for each timestep with early-window robustness.
 
-    Creates feature matrix with 11 features per timestep:
-    - OHLCV (5 features): open, high, low, close, volume
-    - Technical indicators (6 features): RSI, MACD, BB_upper, BB_lower, VWAP, Momentum
-
-    All features are normalized to prevent numerical instability and gradient explosion.
-
-    Args:
-        candles: List of candle dictionaries.
-
-    Returns:
-        Normalized feature array of shape (len(candles), 11).
-
-    Example:
-        >>> candles = load_token_candles('token_ABC.csv')
-        >>> features = extract_features(candles)
-        >>> print(features.shape)
-        (285, 11)
+    Feature set (14) - position-agnostic:
+      0  log_close (relative to first candle)
+      1  ret_1s (log return)
+      2  ret_3s (log return)
+      3  ret_5s (log return)
+      4  range_ratio = (high-low)/close
+      5  volume_log = log1p(volume)
+      6  rsi_norm (0-1)
+      7  macd_norm (macd/close)
+      8  bb_upper_dev = (bb_upper-close)/close
+      9  bb_lower_dev = (bb_lower-close)/close
+     10  vwap_dev = (vwap-close)/close
+     11  momentum_10 (pct change)
+     12  indicator_ready_short (>=5 bars)
+     13  indicator_ready_long (>=20 bars)
     """
-    opens = np.array([c['o'] for c in candles])
-    highs = np.array([c['h'] for c in candles])
-    lows = np.array([c['l'] for c in candles])
-    closes = np.array([c['c'] for c in candles])
-    volumes = np.array([c['v'] for c in candles])
+    closes = np.array([c['c'] for c in candles], dtype=np.float32)
+    highs = np.array([c['h'] for c in candles], dtype=np.float32)
+    lows = np.array([c['l'] for c in candles], dtype=np.float32)
+    volumes = np.array([c['v'] for c in candles], dtype=np.float32)
 
     rsi = calculate_rsi(closes)
     macd = calculate_macd(closes)
@@ -345,14 +283,43 @@ def extract_features(candles: List[Dict[str, float]]) -> np.ndarray:
     vwap = calculate_vwap(candles)
     momentum = calculate_momentum(closes)
 
+    # Relative log price: normalized to first candle (prevents scale variation across tokens)
+    log_close = np.log(np.clip(closes, 1e-8, None)) - np.log(np.clip(closes[0], 1e-8, None))
+    ret_1 = _log_return(closes, 1)
+    ret_3 = _log_return(closes, 3)
+    ret_5 = _log_return(closes, 5)
+    range_ratio = np.where(closes != 0, (highs - lows) / closes, 0.0)
+    volume_log = np.log1p(np.clip(volumes, 0, None))
+
+    macd_norm = np.where(closes != 0, macd / closes, 0.0)
+    bb_upper_dev = np.where(closes != 0, (bb_upper - closes) / closes, 0.0)
+    bb_lower_dev = np.where(closes != 0, (bb_lower - closes) / closes, 0.0)
+    vwap_dev = np.where(closes != 0, (vwap - closes) / closes, 0.0)
+    momentum_10 = momentum
+
+    idx = np.arange(len(closes))
+    indicator_ready_short = (idx >= 5).astype(np.float32)
+    indicator_ready_long = (idx >= 20).astype(np.float32)
+
     features = np.column_stack([
-        opens, highs, lows, closes, volumes,
-        rsi, macd, bb_upper, bb_lower, vwap, momentum
+        log_close,
+        ret_1,
+        ret_3,
+        ret_5,
+        range_ratio,
+        volume_log,
+        rsi / 100.0,
+        macd_norm,
+        bb_upper_dev,
+        bb_lower_dev,
+        vwap_dev,
+        momentum_10,
+        indicator_ready_short,
+        indicator_ready_long,
     ])
 
-    # Normalize features to prevent numerical instability
-    features = normalize_features(features)
-
+    features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+    features = np.clip(features, -10.0, 10.0)
     return features.astype(np.float32)
 
 
@@ -408,44 +375,20 @@ def calculate_net_profit(buy_price: float, sell_price: float) -> float:
 
 
 def prepare_realistic_training_data(token_candles: List[Dict[str, float]],
-                                   min_history: int = MIN_HISTORY_LENGTH
-                                   ) -> List[Dict[str, Any]]:
+                                    min_history: int = MIN_HISTORY_LENGTH
+                                    ) -> List[Dict[str, Any]]:
     """
-    Prepare training data with full historical context.
+    Prepare training data with position-agnostic labels for single unified model.
 
-    Creates training samples where each sample contains ALL price history
-    from token discovery to current timestamp, simulating real market
-    conditions. Includes realistic Jito fee simulation and 1-second
-    execution delay.
+    For each timestamp, generates ONE sample with label based on future price action:
+      - BUY (1):  Strong bullish signal - good profit with acceptable risk
+      - SELL (2): Strong bearish signal - danger (drawdown or rollover)
+      - HOLD (0): Unclear - wait for better signal
 
-    Args:
-        token_candles: List of OHLCV candles for a single token.
-            Each candle dict must contain: 'o', 'h', 'l', 'c', 'v' keys.
-        min_history: Minimum number of candles required before generating
-            samples. Default is 30 (30 seconds of history).
-
-    Returns:
-        List of training samples, each containing:
-            - features: np.ndarray of shape (seq_len, 11)
-            - label: int (0=HOLD, 1=BUY, 2=SELL)
-            - seq_length: int (actual sequence length)
-            - timestamp: int (seconds since discovery)
-            - buy_price: float (simulated execution price)
-            - potential_profit_pct: float (NET profit potential)
-
-    Raises:
-        ValueError: If token_candles is empty or contains invalid data.
-
-    Example:
-        >>> candles = parse_candles(raw_data['candles'].iloc[0])
-        >>> samples = prepare_realistic_training_data(candles, min_history=30)
-        >>> print(f"Generated {len(samples)} training samples")
-        Generated 285 training samples
-
-    Note:
-        This function simulates worst-case execution with 1-second delay.
-        Buy orders use highest price in delay window, sell orders use lowest.
-        All profit calculations include Jito fees (~7% per round trip).
+    The model learns to recognize bullish vs bearish patterns independent of trading state.
+    At inference, interpret predictions based on current position:
+      - Not in position: BUY=enter, SELL=skip, HOLD=wait
+      - In position: SELL=exit, BUY=hold, HOLD=hold
     """
     if not token_candles:
         raise ValueError("token_candles cannot be empty")
@@ -453,32 +396,44 @@ def prepare_realistic_training_data(token_candles: List[Dict[str, float]],
     if len(token_candles) < min_history:
         return []
 
-    samples = []
+    samples: List[Dict[str, Any]] = []
 
     for current_time in range(min_history, len(token_candles)):
-        historical_data = token_candles[0:current_time]
+        historical = token_candles[0:current_time]
 
-        features = extract_features(historical_data)
+        # Extract features (no position flag)
+        features = extract_features(historical)
 
         buy_price = get_execution_price(token_candles, current_time, is_buy=True)
 
-        future_end = min(current_time + DELAY_SECONDS + 20, len(token_candles))
-        future_candles = token_candles[current_time + DELAY_SECONDS:future_end]
+        future_start = current_time + DELAY_SECONDS
+        future_end = min(future_start + LOOKAHEAD_SECONDS, len(token_candles))
+        future_candles = token_candles[future_start:future_end]
 
         if not future_candles:
             continue
 
-        best_sell_price = max(c['h'] for c in future_candles)
+        max_future_high = max(c['h'] for c in future_candles)
+        min_future_low = min(c['l'] for c in future_candles)
+        end_close = future_candles[-1]['c']
 
-        net_profit = calculate_net_profit(buy_price, best_sell_price)
+        net_profit = calculate_net_profit(buy_price, max_future_high)
         profit_pct = net_profit / FIXED_POSITION_SIZE
+        drawdown_pct = (min_future_low - buy_price) / buy_price
+        peak_gain_pct = (max_future_high - buy_price) / buy_price
 
-        if profit_pct > BUY_THRESHOLD:
-            label = 1
-        elif profit_pct < HOLD_THRESHOLD:
-            label = 0
+        # Position-agnostic labeling based on future price action
+        rolled_over = peak_gain_pct >= TAKE_PROFIT_PCT and end_close <= max_future_high * (1 - TRAIL_BACKOFF_PCT)
+
+        if profit_pct >= TAKE_PROFIT_PCT and drawdown_pct >= STOP_LOSS_PCT:
+            # Strong bullish: good profit with acceptable drawdown
+            label = 1  # BUY
+        elif drawdown_pct <= STOP_LOSS_PCT or rolled_over:
+            # Strong bearish: hits stop loss or pumps then dumps
+            label = 2  # SELL
         else:
-            label = 2
+            # Unclear: neither strong bull nor bear signal
+            label = 0  # HOLD
 
         samples.append({
             'features': features,
@@ -487,6 +442,7 @@ def prepare_realistic_training_data(token_candles: List[Dict[str, float]],
             'timestamp': current_time,
             'buy_price': buy_price,
             'potential_profit_pct': profit_pct,
+            'drawdown_pct': drawdown_pct,
         })
 
     return samples
@@ -544,7 +500,7 @@ def collate_variable_length(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tens
 
     Returns:
         Dictionary with padded tensors:
-            - features: (batch, max_seq_len, 11)
+            - features: (batch, max_seq_len, 15)
             - labels: (batch,)
             - seq_lengths: (batch,)
 

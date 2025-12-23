@@ -215,6 +215,15 @@ def process_and_save_data(csv_path: str,
         print(f"  BUY  (1): {label_counts[1]:,} ({label_counts[1]/len(labels)*100:.1f}%)")
         print(f"  SELL (2): {label_counts[2]:,} ({label_counts[2]/len(labels)*100:.1f}%)")
 
+        early = [s for s in train_samples if s['seq_length'] <= 60]
+        if early:
+            early_labels = [s['label'] for s in early]
+            early_counts = np.bincount(early_labels, minlength=3)
+            print(f"\nEarly-window samples (<=60s): {len(early):,}")
+            print(f"  HOLD (0): {early_counts[0]:,} ({early_counts[0]/len(early_labels)*100:.1f}%)")
+            print(f"  BUY  (1): {early_counts[1]:,} ({early_counts[1]/len(early_labels)*100:.1f}%)")
+            print(f"  SELL (2): {early_counts[2]:,} ({early_counts[2]/len(early_labels)*100:.1f}%)")
+
         profits = [s['potential_profit_pct'] for s in train_samples if s['label'] == 1]
         if profits:
             print(f"\nPotential profit for BUY signals (train):")

@@ -22,17 +22,19 @@ JITO_TIP_AVG: float = 0.00005
 GAS_FEE_FIXED: float = 0.0002
 PRIORITY_FEE: float = 0.0001
 TOTAL_FEE_PER_TX: float = 0.00035
-MIN_HISTORY_LENGTH: int = 30
 
-# Profit thresholds for label generation
-BUY_THRESHOLD: float = 0.10
-HOLD_THRESHOLD: float = 0.03
+# Data/labeling constants
+MIN_HISTORY_LENGTH: int = 12  # allow acting quickly after launch
+LOOKAHEAD_SECONDS: int = 20
+TAKE_PROFIT_PCT: float = 0.05   # net profit required to buy (lowered from 0.08)
+STOP_LOSS_PCT: float = -0.06    # drawdown that triggers sell/avoid (more tolerant)
+TRAIL_BACKOFF_PCT: float = 0.03 # take profit if price rolls over after rally
 
 # Default configuration dictionary
 DEFAULT_CONFIG: Dict[str, Any] = {
     'model': {
         'type': 'lstm',
-        'input_size': 11,
+        'input_size': 14,  # Removed in_position flag
         'hidden_size': 128,
         'num_layers': 2,
         'num_classes': 3,
@@ -47,6 +49,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         'weight_decay': 1e-5,
         'use_mixed_precision': True,
         'accumulation_steps': 4,
+        'use_focal_loss': True,
+        'focal_gamma': 2.0,
+        'label_smoothing': 0.0,
+        'use_weighted_sampler': True,
     },
     'data': {
         'min_history_length': MIN_HISTORY_LENGTH,
@@ -60,8 +66,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         'fixed_position_size': FIXED_POSITION_SIZE,
         'delay_seconds': DELAY_SECONDS,
         'total_fee_per_tx': TOTAL_FEE_PER_TX,
-        'buy_threshold': BUY_THRESHOLD,
-        'hold_threshold': HOLD_THRESHOLD,
+        'take_profit_pct': TAKE_PROFIT_PCT,
+        'stop_loss_pct': STOP_LOSS_PCT,
+        'trail_backoff_pct': TRAIL_BACKOFF_PCT,
         'confidence_threshold': 0.7,
     },
     'dataloader': {

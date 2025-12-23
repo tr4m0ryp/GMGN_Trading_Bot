@@ -58,6 +58,9 @@ def backtest_token(model: nn.Module,
 
     with torch.no_grad():
         for sample in token_samples:
+            if sample.get('in_position', False):
+                continue
+
             features = torch.FloatTensor(sample['features']).unsqueeze(0).to(device)
             seq_length = torch.LongTensor([sample['seq_length']])
 

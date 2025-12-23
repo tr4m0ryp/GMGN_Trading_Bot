@@ -29,6 +29,192 @@ from tqdm import tqdm
 
 from utils import save_checkpoint
 
+import numpy as np
+from torch.utils.data import WeightedRandomSampler
+
+
+def sanity_check_overfit_batch(model: nn.Module,
+                               train_loader,
+                               device: str,
+                               num_steps: int = 100) -> bool:
+    """
+    Verify model can overfit a single batch (proves learning is possible).
+
+    This sanity check trains the model on a single batch for many steps.
+    If the model cannot achieve high accuracy on one batch, there is likely
+    a fundamental issue with the architecture or data.
+
+    Args:
+        model: PyTorch model to test.
+        train_loader: DataLoader for training data.
+        device: Device to train on.
+        num_steps: Number of optimization steps. Default is 100.
+
+    Returns:
+        True if model achieves >80% accuracy on the batch, False otherwise.
+    """
+    import copy
+    test_model = copy.deepcopy(model)
+    test_model.train()
+
+    batch = next(iter(train_loader))
+    features = batch['features'].to(device)
+    labels = batch['labels'].to(device)
+    seq_lengths = batch['seq_lengths']
+
+    optimizer = torch.optim.Adam(test_model.parameters(), lr=0.01)
+    criterion = nn.CrossEntropyLoss()
+
+    print("Sanity check: overfitting single batch...")
+    for step in range(num_steps):
+        optimizer.zero_grad()
+        logits, _ = test_model(features, seq_lengths)
+        loss = criterion(logits, labels)
+        loss.backward()
+        optimizer.step()
+
+        if step % 20 == 0:
+            acc = (logits.argmax(dim=1) == labels).float().mean()
+            print(f"  Step {step}: loss={loss.item():.4f}, acc={acc.item():.4f}")
+
+    with torch.no_grad():
+        logits, _ = test_model(features, seq_lengths)
+        final_acc = (logits.argmax(dim=1) == labels).float().mean().item()
+
+    if final_acc < 0.8:
+        print(f"WARNING: Model cannot overfit single batch (acc={final_acc:.2f})")
+        print("         Check architecture or data quality")
+        return False
+
+    print(f"Sanity check PASSED: model can learn (acc={final_acc:.2f})")
+    return True
+
+
+def analyze_predictions(model: nn.Module,
+                       val_loader,
+                       device: str) -> tuple:
+    """
+    Analyze prediction distribution to detect class collapse.
+
+    Computes the distribution of predictions vs actual labels to identify
+    if the model is collapsing to always predict one class.
+
+    Args:
+        model: PyTorch model to analyze.
+        val_loader: DataLoader for validation data.
+        device: Device to run on.
+
+    Returns:
+        Tuple of (predictions_list, labels_list).
+    """
+    model.eval()
+    all_preds = []
+    all_labels = []
+
+    with torch.no_grad():
+        for batch in val_loader:
+            features = batch['features'].to(device)
+            labels = batch['labels'].to(device)
+            seq_lengths = batch['seq_lengths']
+
+            logits, _ = model(features, seq_lengths)
+            preds = logits.argmax(dim=1).cpu().numpy()
+            all_preds.extend(preds)
+            all_labels.extend(labels.cpu().numpy())
+
+    print("\nPrediction Distribution:")
+    class_names = ['HOLD', 'BUY', 'SELL']
+    for cls in [0, 1, 2]:
+        pred_count = sum(1 for p in all_preds if p == cls)
+        label_count = sum(1 for l in all_labels if l == cls)
+        print(f"  {class_names[cls]} ({cls}): pred={pred_count:5d} ({pred_count/len(all_preds)*100:5.1f}%), "
+              f"actual={label_count:5d} ({label_count/len(all_labels)*100:5.1f}%)")
+
+    return all_preds, all_labels
+
+
+def diagnose_training_setup(model: nn.Module,
+                            train_loader,
+                            val_loader,
+                            device: str) -> bool:
+    """
+    Run comprehensive diagnostics before full training.
+
+    Checks data quality, feature statistics, label distribution, and
+    model learning capability.
+
+    Args:
+        model: PyTorch model to diagnose.
+        train_loader: DataLoader for training data.
+        val_loader: DataLoader for validation data.
+        device: Device to run on.
+
+    Returns:
+        True if all checks pass, False otherwise.
+    """
+    print("=" * 60)
+    print("TRAINING DIAGNOSTICS")
+    print("=" * 60)
+
+    batch = next(iter(train_loader))
+
+    print(f"\n[Data]")
+    print(f"  Batch size: {batch['features'].shape[0]}")
+    print(f"  Sequence lengths: min={batch['seq_lengths'].min().item()}, "
+          f"max={batch['seq_lengths'].max().item()}")
+    print(f"  Feature shape: {batch['features'].shape}")
+
+    print(f"\n[Labels in batch]")
+    labels = batch['labels'].numpy()
+    class_names = ['HOLD', 'BUY', 'SELL']
+    for cls in [0, 1, 2]:
+        pct = (labels == cls).sum() / len(labels) * 100
+        print(f"  {class_names[cls]} ({cls}): {pct:.1f}%")
+
+    feats = batch['features'].numpy()
+    print(f"\n[Features]")
+    print(f"  Mean: {feats.mean():.4f}, Std: {feats.std():.4f}")
+    print(f"  Min: {feats.min():.4f}, Max: {feats.max():.4f}")
+    print(f"  NaN count: {np.isnan(feats).sum()}")
+    print(f"  Inf count: {np.isinf(feats).sum()}")
+
+    print(f"\n[Sanity Check]")
+    passed = sanity_check_overfit_batch(model, train_loader, device, num_steps=50)
+
+    print(f"\n[Initial Predictions]")
+    analyze_predictions(model, val_loader, device)
+
+    print("=" * 60)
+    return passed
+
+
+class FocalLoss(nn.Module):
+    """Standard focal loss for multi-class classification."""
+
+    def __init__(self,
+                 weight: torch.Tensor = None,
+                 gamma: float = 2.0,
+                 reduction: str = 'mean'):
+        super().__init__()
+        self.weight = weight
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        ce_loss = nn.functional.cross_entropy(
+            logits,
+            targets,
+            weight=self.weight,
+            reduction='none'
+        )
+        pt = torch.exp(-ce_loss)
+        focal = (1 - pt) ** self.gamma * ce_loss
+        if self.reduction == 'mean':
+            return focal.mean()
+        if self.reduction == 'sum':
+            return focal.sum()
+        return focal
+
 
 def train_epoch(model: nn.Module,
                train_loader: DataLoader,
@@ -73,12 +259,12 @@ def train_epoch(model: nn.Module,
 
         if scaler is not None:
             with autocast(device_type='cuda' if device == 'cuda' else 'cpu'):
-                predictions, _ = model(features, seq_lengths)
-                loss = criterion(predictions, labels)
+                logits, _ = model(features, seq_lengths)
+                loss = criterion(logits, labels)
                 loss = loss / accumulation_steps
         else:
-            predictions, _ = model(features, seq_lengths)
-            loss = criterion(predictions, labels)
+            logits, _ = model(features, seq_lengths)
+            loss = criterion(logits, labels)
             loss = loss / accumulation_steps
 
         if scaler is not None:
@@ -135,12 +321,12 @@ def validate(model: nn.Module,
             labels = batch['labels'].to(device)
             seq_lengths = batch['seq_lengths']
 
-            predictions, _ = model(features, seq_lengths)
-            loss = criterion(predictions, labels)
+            logits, _ = model(features, seq_lengths)
+            loss = criterion(logits, labels)
 
             total_loss += loss.item()
 
-            predicted = torch.argmax(predictions, dim=1)
+            predicted = torch.argmax(logits, dim=1)
             correct += (predicted == labels).sum().item()
             total += labels.size(0)
 
@@ -190,6 +376,44 @@ def compute_class_weights(train_loader: DataLoader,
     class_weights = class_weights / class_weights.mean()
 
     return class_weights.to(device)
+
+
+def create_weighted_sampler(dataset, num_classes: int = 3) -> WeightedRandomSampler:
+    """
+    Create weighted sampler to balance class distribution.
+
+    Oversamples minority classes to achieve balanced batches during training.
+    This is complementary to class weights in the loss function.
+
+    Args:
+        dataset: PyTorch dataset with samples containing 'label' field.
+        num_classes: Number of classes. Default is 3.
+
+    Returns:
+        WeightedRandomSampler for use in DataLoader.
+
+    Example:
+        >>> sampler = create_weighted_sampler(train_dataset)
+        >>> train_loader = DataLoader(train_dataset, sampler=sampler, ...)
+    """
+    labels = [dataset[i]['label'] for i in range(len(dataset))]
+    class_counts = np.bincount(labels, minlength=num_classes)
+
+    # Inverse frequency weights
+    class_weights = 1.0 / class_counts
+    sample_weights = [class_weights[label] for label in labels]
+
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True
+    )
+
+    print(f"Created weighted sampler:")
+    print(f"  Class counts: {class_counts}")
+    print(f"  Class weights: {class_weights}")
+
+    return sampler
 
 
 def train_model(model: nn.Module,
@@ -248,7 +472,14 @@ def train_model(model: nn.Module,
     class_weights = compute_class_weights(train_loader, num_classes, device)
     print(f"Class weights: {class_weights.cpu().numpy()}")
 
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    use_focal = training_config.get('use_focal_loss', False)
+    focal_gamma = training_config.get('focal_gamma', 2.0)
+    label_smoothing = training_config.get('label_smoothing', 0.0)
+
+    if use_focal:
+        criterion = FocalLoss(weight=class_weights, gamma=focal_gamma)
+    else:
+        criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=learning_rate,

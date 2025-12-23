@@ -23,8 +23,8 @@
 
 **Architecture:**
 ```
-Input: Variable-length sequences (batch, seq_len, 11 features)
-  - seq_len ranges from 30 to 500+ candles
+Input: Variable-length sequences (batch, seq_len, 15 features)
+  - seq_len ranges from 12 to 500+ candles
 
 LSTM Layers:
   - 2-3 layers with 128-256 hidden units
@@ -57,28 +57,24 @@ Output:
 
 Each training sample consists of ALL historical data from token discovery to current timestamp.
 
-### Raw OHLCV Data (5 features)
-- **Open**: Opening price for the second
-- **High**: Highest price in the second
-- **Low**: Lowest price in the second
-- **Close**: Closing price for the second
-- **Volume**: Trading volume in the second
-
-### Technical Indicators (6 features)
-*These features are pre-calculated during the preprocessing step and added to the dataset before training. The model receives them as input values, not formulas.*
-
-- **RSI (14)**: Relative Strength Index (14-period, adjusted for sequence length)
-- **MACD**: Moving Average Convergence Divergence (12, 26, 9)
-- **Bollinger Upper**: Upper Bollinger Band (20-period)
-- **Bollinger Lower**: Lower Bollinger Band (20-period)
-- **VWAP**: Volume-Weighted Average Price
-- **Momentum**: Rate of Change (10-period)
+### Feature Set (15 total)
+- **log_close**
+- **ret_1s**, **ret_3s**, **ret_5s** (log returns)
+- **range_ratio**: (high-low)/close
+- **volume_log**: log1p(volume)
+- **rsi_norm**
+- **macd_norm**: macd/close
+- **bb_upper_dev**, **bb_lower_dev**: (band-close)/close
+- **vwap_dev**: (vwap-close)/close
+- **momentum_10**
+- **indicator_ready_short/long**: masks for early-window reliability
+- **in_position_flag**: 0 for entry context, 1 for exit context
 
 ### Input Shape Specification
 
-**Shape:** `(batch, variable_seq_len, 11)` where:
+**Shape:** `(batch, variable_seq_len, 15)` where:
 - `variable_seq_len` = current_timestamp - discovery_timestamp (in seconds)
-- Minimum: 30 candles (30 seconds minimum history)
+- Minimum: 12 candles (act earlier on fresh launches)
 - Maximum: 500+ candles for long-lived tokens
 
 **Example Shapes:**
@@ -89,7 +85,7 @@ Token at 200s: (batch, 200, 11)  - Mature token, model sees full pump history
 ```
 
 **Critical Advantage**: The sequence length itself is a powerful signal:
-- Short sequences (30-60s): Token is fresh, aggressive entry viable
+- Short sequences (12-60s): Token is fresh, aggressive entry viable
 - Medium sequences (60-180s): Prime trading window, multiple cycles visible
 - Long sequences (180s+): Token maturing, model sees if it's dying or continuing
 
@@ -126,7 +122,7 @@ JITO_TIP_AVG = 0.00005      # Average Jito tip (50,000 lamports)
 GAS_FEE_FIXED = 0.0002      # Solana gas fee
 PRIORITY_FEE = 0.0001       # Priority fee for compute units
 TOTAL_FEE_PER_TX = 0.00035  # Total fee per transaction
-MIN_HISTORY_LENGTH = 30     # Minimum candles required
+MIN_HISTORY_LENGTH = 12     # Minimum candles required (act early)
 ```
 
 ### Realistic Execution Simulation
@@ -165,40 +161,32 @@ def prepare_realistic_training_data(token_candles):
     """
     samples = []
 
-    for current_time in range(MIN_HISTORY_LENGTH, len(token_candles)):
-        # CRITICAL: Model sees ALL history from discovery to current_time
-        historical_data = token_candles[0:current_time]  # Variable length!
+for current_time in range(MIN_HISTORY_LENGTH, len(token_candles)):
+    historical_data = token_candles[0:current_time]
 
-        # Extract features from all historical candles
-        features = extract_features(historical_data)  # (current_time, 11)
+    # Two contexts: flat (entry) and in-position (exit)
+    features_flat = extract_features(historical_data, in_position=False)  # (current_time, 15)
+    features_in_pos = extract_features(historical_data, in_position=True) # (current_time, 15)
 
-        # Simulate buy execution with realistic delay
-        buy_price = get_execution_price(token_candles, current_time, is_buy=True)
+    buy_price = get_execution_price(token_candles, current_time, is_buy=True)
+    future_candles = token_candles[current_time + DELAY_SECONDS:current_time + LOOKAHEAD_SECONDS]
+    max_future_high = max(c['high'] for c in future_candles)
+    min_future_low = min(c['low'] for c in future_candles)
+    end_close = future_candles[-1]['close']
 
-        # Look ahead to find optimal sell point (for labeling ONLY)
-        future_candles = token_candles[current_time + DELAY_SECONDS:current_time + 20]
+    profit_pct = calculate_net_profit(buy_price, max_future_high) / FIXED_POSITION_SIZE
+    drawdown_pct = (min_future_low - buy_price) / buy_price
+    peak_gain_pct = (max_future_high - buy_price) / buy_price
+    rolled_over = peak_gain_pct >= TAKE_PROFIT_PCT and end_close <= max_future_high * (1 - TRAIL_BACKOFF_PCT)
 
-        # Find best sell price in next 20 seconds
-        best_sell_price = max(c['high'] for c in future_candles)
+    # Flat context: BUY only if upside > TP and drawdown above SL
+    label_flat = 1 if profit_pct >= TAKE_PROFIT_PCT and drawdown_pct >= STOP_LOSS_PCT else 0
 
-        # Calculate potential NET profit (after fees)
-        net_profit = calculate_net_profit(buy_price, best_sell_price)
-        profit_pct = net_profit / FIXED_POSITION_SIZE
+    # In-position context: SELL on stop or rollover
+    label_in_pos = 2 if (drawdown_pct <= STOP_LOSS_PCT or rolled_over) else 0
 
-        # Determine label based on net profit potential
-        if profit_pct > 0.10:      # >10% net profit possible
-            label = 1  # BUY
-        elif profit_pct < 0.03:    # <3% profit, not worth risk
-            label = 0  # HOLD
-        else:
-            label = 2  # SELL
-
-        samples.append({
-            'features': features,           # Shape: (current_time, 11)
-            'label': label,                 # 0/1/2
-            'seq_length': current_time,     # Actual sequence length
-            'timestamp': current_time,
-        })
+    samples.append({'features': features_flat, 'label': label_flat, 'seq_length': current_time, 'timestamp': current_time})
+    samples.append({'features': features_in_pos, 'label': label_in_pos, 'seq_length': current_time, 'timestamp': current_time})
 
     return samples
 ```
