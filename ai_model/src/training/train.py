@@ -654,7 +654,7 @@ def train_model(model: nn.Module,
         )
         use_step_scheduler = False
 
-    scaler = GradScaler(device='cuda') if use_mixed_precision and device == 'cuda' else None
+    scaler = GradScaler() if use_mixed_precision and device == 'cuda' else None
 
     best_val_loss = float('inf')
     best_val_accuracy = 0.0
