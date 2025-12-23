@@ -10,6 +10,11 @@ pandas>=2.0.0
 # Machine Learning Utilities
 scikit-learn>=1.3.0
 
+# Reinforcement Learning
+stable-baselines3>=2.0.0
+sb3-contrib>=2.0.0
+gymnasium>=0.29.0
+
 # Progress Bars
 tqdm>=4.65.0
 

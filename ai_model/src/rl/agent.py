@@ -361,6 +361,50 @@ class RLTradingAgent:
         algorithm_class = self.ALGORITHMS[self.algorithm_name]
         self.model = algorithm_class.load(path, env=self.env)
 
+    def predict_with_confidence(
+        self,
+        observation: np.ndarray,
+        confidence_threshold: float = 0.6,
+    ) -> Tuple[int, float]:
+        """
+        Predict action only if model confidence exceeds threshold.
+
+        This enables selective trading - only take action when confident.
+        Returns HOLD (0) if confidence is below threshold.
+
+        Args:
+            observation: Current observation.
+            confidence_threshold: Minimum probability to execute action.
+
+        Returns:
+            Tuple of (action, confidence).
+            If confidence < threshold, returns (0, confidence) for HOLD.
+        """
+        obs_tensor = torch.tensor(observation).float().unsqueeze(0)
+        if hasattr(self.model, 'device'):
+            obs_tensor = obs_tensor.to(self.model.device)
+
+        with torch.no_grad():
+            # Get action distribution from policy
+            features = self.model.policy.extract_features(obs_tensor)
+            if hasattr(self.model.policy, 'mlp_extractor'):
+                latent_pi, _ = self.model.policy.mlp_extractor(features)
+            else:
+                latent_pi = features
+
+            action_logits = self.model.policy.action_net(latent_pi)
+            action_probs = torch.softmax(action_logits, dim=-1).squeeze()
+
+            # Get best action and its probability
+            best_action = action_probs.argmax().item()
+            confidence = action_probs[best_action].item()
+
+            # Only execute non-HOLD action if confident enough
+            if best_action != 0 and confidence < confidence_threshold:
+                return 0, confidence  # HOLD if not confident
+
+            return best_action, confidence
+
     def evaluate(
         self,
         n_episodes: int = 10,
@@ -403,4 +447,58 @@ class RLTradingAgent:
             "mean_trades": np.mean(total_trades),
             "win_rate": np.sum(total_wins) / max(1, np.sum(total_trades)),
             "mean_episode_length": np.mean(episode_lengths),
+        }
+
+    def evaluate_with_confidence(
+        self,
+        n_episodes: int = 10,
+        confidence_threshold: float = 0.7,
+    ) -> Dict[str, float]:
+        """
+        Evaluate agent with confidence-based selective trading.
+
+        Only executes trades when confidence exceeds threshold,
+        which typically results in higher win rates.
+
+        Args:
+            n_episodes: Number of evaluation episodes.
+            confidence_threshold: Minimum confidence to execute trade.
+
+        Returns:
+            Dictionary with evaluation metrics including filtered win rate.
+        """
+        total_pnls = []
+        total_trades = []
+        total_wins = []
+        total_confidence_filtered = []
+
+        for _ in range(n_episodes):
+            obs, _ = self.env.reset()
+            done = False
+            filtered_actions = 0
+
+            while not done:
+                action, confidence = self.predict_with_confidence(
+                    obs, confidence_threshold
+                )
+
+                # Count how many actions were filtered
+                if confidence < confidence_threshold:
+                    filtered_actions += 1
+
+                obs, reward, terminated, truncated, info = self.env.step(action)
+                done = terminated or truncated
+
+            total_pnls.append(info.get("total_pnl", 0.0))
+            total_trades.append(info.get("n_trades", 0))
+            total_wins.append(info.get("n_trades", 0) * info.get("win_rate", 0.0))
+            total_confidence_filtered.append(filtered_actions)
+
+        return {
+            "mean_pnl": np.mean(total_pnls),
+            "std_pnl": np.std(total_pnls),
+            "mean_trades": np.mean(total_trades),
+            "win_rate": np.sum(total_wins) / max(1, np.sum(total_trades)),
+            "mean_filtered_actions": np.mean(total_confidence_filtered),
+            "confidence_threshold": confidence_threshold,
         }

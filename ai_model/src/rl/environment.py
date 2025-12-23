@@ -27,25 +27,26 @@ from data.preparation import extract_features, get_execution_price
 
 class TradingEnvironmentV2(gym.Env):
     """
-    Improved trading environment with hindsight rewards.
+    Improved trading environment with win-rate focused rewards.
 
-    Key improvements over V1:
-    1. **Hindsight rewards**: Penalizes missing profitable moves
-    2. **Potential-based shaping**: Rewards based on price momentum
-    3. **Curriculum learning**: Fee multiplier starts at 0, increases over time
-    4. **Minimum trade requirement**: Episode reward bonus for active trading
-    5. **Asymmetric rewards**: Bigger bonus for wins than penalty for losses
+    Key improvements:
+    1. **Win-rate focused rewards**: Binary rewards for wins, not proportional to PnL
+    2. **Hindsight rewards**: Penalizes missing profitable moves
+    3. **Selective trading**: Rewards waiting for high-quality opportunities
+    4. **Curriculum learning**: Fee multiplier starts at 0, increases over time
+    5. **Asymmetric rewards**: Bigger bonus for wins (1.0) than penalty for losses (-0.3)
 
-    The goal is to prevent the agent from learning to "do nothing".
+    The goal is to maximize win rate (>90%) not total PnL.
 
     Args:
         candles: List of candle dictionaries.
         max_steps: Maximum steps per episode.
         fee_multiplier: Fee scaling (0=no fees, 1=full fees). Use for curriculum.
-        opportunity_penalty: Penalty for missing profitable moves. Default 0.01.
-        min_trades_bonus: Bonus if agent makes at least N trades. Default 0.1.
-        min_trades_required: Minimum trades for bonus. Default 3.
+        opportunity_penalty: Penalty for missing profitable moves. Default 0.005.
+        min_trades_bonus: Bonus if agent makes at least N trades. Default 0.05.
+        min_trades_required: Minimum trades for bonus. Default 2.
         win_bonus_multiplier: Extra multiplier for winning trades. Default 1.5.
+        use_binary_rewards: Use binary win/loss rewards instead of PnL-scaled.
     """
 
     metadata = {"render_modes": ["human"]}
@@ -56,11 +57,13 @@ class TradingEnvironmentV2(gym.Env):
         max_steps: Optional[int] = None,
         fee_multiplier: float = 0.5,  # Start with half fees
         position_size: float = FIXED_POSITION_SIZE,
-        opportunity_penalty: float = 0.005,  # Penalty for missing opportunities
-        min_trades_bonus: float = 0.05,  # Bonus for meeting trade minimum
+        opportunity_penalty: float = 0.003,  # Reduced: only penalize clear opportunities
+        min_trades_bonus: float = 0.1,  # Bonus for meeting trade minimum
         min_trades_required: int = 2,  # Minimum trades to get bonus
         win_bonus_multiplier: float = 1.5,  # Extra reward for wins
-        momentum_reward_scale: float = 0.01,  # Reward for riding momentum
+        momentum_reward_scale: float = 0.005,  # Reduced momentum scale
+        use_binary_rewards: bool = True,  # Binary win/loss rewards for win rate
+        min_profit_threshold: float = 0.005,  # Minimum return to count as win
     ):
         super().__init__()
 
@@ -75,6 +78,8 @@ class TradingEnvironmentV2(gym.Env):
         self.min_trades_required = min_trades_required
         self.win_bonus_multiplier = win_bonus_multiplier
         self.momentum_reward_scale = momentum_reward_scale
+        self.use_binary_rewards = use_binary_rewards
+        self.min_profit_threshold = min_profit_threshold
 
         # Pre-compute price changes for hindsight rewards
         self.all_features = extract_features(candles)
@@ -168,8 +173,13 @@ class TradingEnvironmentV2(gym.Env):
         net_value = sell_value - (2 * self.fee_per_trade)
         return net_value - self.position_size
 
-    def _is_good_opportunity(self, threshold: float = 0.02) -> bool:
-        """Check if current step is a good buying opportunity."""
+    def _is_good_opportunity(self, threshold: float = 0.03) -> bool:
+        """
+        Check if current step is a good buying opportunity.
+
+        Uses higher threshold (3%) to only flag truly good opportunities.
+        This makes the agent more selective about when to trade.
+        """
         return self._get_forward_return() >= threshold
 
     def reset(
@@ -218,17 +228,34 @@ class TradingEnvironmentV2(gym.Env):
             if self.in_position:
                 sell_price = self._get_execution_price(is_buy=False)
                 trade_pnl = self._calculate_trade_pnl(self.entry_price, sell_price)
+                trade_return = trade_pnl / self.position_size
 
                 self.total_pnl += trade_pnl
                 self.n_trades += 1
 
-                if trade_pnl > 0:
-                    self.n_wins += 1
-                    # Asymmetric: bigger bonus for wins
-                    reward = trade_pnl * 100 * self.win_bonus_multiplier
+                if self.use_binary_rewards:
+                    # Binary rewards: focus on win rate, not magnitude
+                    if trade_return > self.min_profit_threshold:
+                        # Clear win: fixed positive reward
+                        self.n_wins += 1
+                        reward = 1.0
+                    elif trade_return > 0:
+                        # Small win: smaller positive reward
+                        self.n_wins += 1
+                        reward = 0.5
+                    elif trade_return > -0.01:
+                        # Small loss: small penalty
+                        reward = -0.3
+                    else:
+                        # Large loss: bigger penalty but still capped
+                        reward = -0.5
                 else:
-                    # Standard penalty for losses
-                    reward = trade_pnl * 100
+                    # Original PnL-scaled rewards
+                    if trade_pnl > 0:
+                        self.n_wins += 1
+                        reward = trade_pnl * 100 * self.win_bonus_multiplier
+                    else:
+                        reward = trade_pnl * 100
 
                 self.in_position = False
                 self.entry_price = 0.0
@@ -264,17 +291,34 @@ class TradingEnvironmentV2(gym.Env):
             if self.in_position:
                 sell_price = self._get_current_price()
                 trade_pnl = self._calculate_trade_pnl(self.entry_price, sell_price)
+                trade_return = trade_pnl / self.position_size
                 self.total_pnl += trade_pnl
                 self.n_trades += 1
-                if trade_pnl > 0:
-                    self.n_wins += 1
-                    reward += trade_pnl * 100 * self.win_bonus_multiplier
+
+                if self.use_binary_rewards:
+                    if trade_return > 0:
+                        self.n_wins += 1
+                        reward += 0.5  # Smaller reward for forced close
+                    else:
+                        reward -= 0.3
                 else:
-                    reward += trade_pnl * 100
+                    if trade_pnl > 0:
+                        self.n_wins += 1
+                        reward += trade_pnl * 100 * self.win_bonus_multiplier
+                    else:
+                        reward += trade_pnl * 100
 
             # End-of-episode bonus for active trading
             if self.n_trades >= self.min_trades_required:
                 reward += self.min_trades_bonus
+
+                # Additional bonus for high win rate (incentivize 90%+)
+                if self.use_binary_rewards and self.n_trades >= 2:
+                    current_win_rate = self.n_wins / self.n_trades
+                    if current_win_rate >= 0.9:
+                        reward += 0.5  # Big bonus for 90%+ win rate
+                    elif current_win_rate >= 0.7:
+                        reward += 0.2  # Smaller bonus for 70%+ win rate
             else:
                 # Penalty for being too passive
                 reward -= self.min_trades_bonus * 0.5
