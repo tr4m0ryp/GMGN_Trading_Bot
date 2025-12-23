@@ -5,6 +5,12 @@ This module implements the training loop with mixed precision training,
 validation, early stopping, and checkpoint management. Optimized for
 NVIDIA Tesla T4 GPU with automatic mixed precision (AMP).
 
+Supports multiple model architectures:
+- Simple LSTM
+- Attention LSTM
+- Advanced Transformer-LSTM hybrid
+- Lightweight Transformer
+
 Dependencies:
     torch: Deep learning framework
     torch.cuda.amp: Automatic mixed precision
@@ -12,11 +18,12 @@ Dependencies:
     tqdm: Progress bars
 
 Author: Trading Team
-Date: 2025-12-21
+Date: 2025-12-23
 """
 
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
+import math
 
 import torch
 import torch.nn as nn
@@ -31,6 +38,131 @@ from utils import save_checkpoint
 
 import numpy as np
 from torch.utils.data import WeightedRandomSampler
+
+
+def create_model(config: Dict[str, Any], device: str = 'cuda') -> nn.Module:
+    """
+    Create model based on configuration.
+
+    Args:
+        config: Configuration dictionary containing model parameters.
+        device: Device to place model on.
+
+    Returns:
+        Initialized model on the specified device.
+
+    Example:
+        >>> config = get_config('advanced')
+        >>> model = create_model(config, 'cuda')
+        >>> print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    """
+    model_config = config['model']
+    model_type = model_config['type']
+
+    if model_type == 'lstm':
+        from models.lstm import VariableLengthLSTMTrader
+        model = VariableLengthLSTMTrader(
+            input_size=model_config['input_size'],
+            hidden_size=model_config['hidden_size'],
+            num_layers=model_config['num_layers'],
+            num_classes=model_config['num_classes'],
+            dropout=model_config['dropout']
+        )
+    elif model_type == 'attention_lstm':
+        from models.attention_lstm import AttentionLSTMTrader
+        model = AttentionLSTMTrader(
+            input_size=model_config['input_size'],
+            hidden_size=model_config['hidden_size'],
+            num_layers=model_config['num_layers'],
+            num_classes=model_config['num_classes'],
+            dropout=model_config['dropout']
+        )
+    elif model_type == 'transformer_lstm':
+        from models.transformer_lstm import AdvancedTransformerLSTMTrader
+        model = AdvancedTransformerLSTMTrader(
+            input_size=model_config['input_size'],
+            hidden_size=model_config['hidden_size'],
+            num_lstm_layers=model_config['num_lstm_layers'],
+            num_transformer_layers=model_config['num_transformer_layers'],
+            num_heads=model_config['num_heads'],
+            num_classes=model_config['num_classes'],
+            dropout=model_config['dropout'],
+            ff_mult=model_config.get('ff_mult', 4)
+        )
+    elif model_type == 'lightweight_transformer':
+        from models.transformer_lstm import LightweightTransformerTrader
+        model = LightweightTransformerTrader(
+            input_size=model_config['input_size'],
+            hidden_size=model_config['hidden_size'],
+            num_layers=model_config['num_layers'],
+            num_heads=model_config['num_heads'],
+            num_classes=model_config['num_classes'],
+            dropout=model_config['dropout']
+        )
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+
+    model = model.to(device)
+
+    # Print model statistics
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Model type: {model_type}")
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+
+    return model
+
+
+class CosineAnnealingWarmupLR:
+    """
+    Cosine annealing learning rate scheduler with linear warmup.
+
+    Implements a learning rate schedule that:
+    1. Linearly warms up from 0 to max_lr over warmup_steps
+    2. Cosine anneals from max_lr to min_lr over remaining steps
+
+    Args:
+        optimizer: PyTorch optimizer.
+        warmup_steps: Number of warmup steps.
+        total_steps: Total number of training steps.
+        max_lr: Maximum learning rate after warmup.
+        min_lr: Minimum learning rate at end. Default is 1e-6.
+    """
+
+    def __init__(self,
+                 optimizer: torch.optim.Optimizer,
+                 warmup_steps: int,
+                 total_steps: int,
+                 max_lr: float,
+                 min_lr: float = 1e-6):
+        self.optimizer = optimizer
+        self.warmup_steps = warmup_steps
+        self.total_steps = total_steps
+        self.max_lr = max_lr
+        self.min_lr = min_lr
+        self.current_step = 0
+
+    def step(self):
+        """Update learning rate based on current step."""
+        self.current_step += 1
+
+        if self.current_step <= self.warmup_steps:
+            # Linear warmup
+            lr = self.max_lr * (self.current_step / self.warmup_steps)
+        else:
+            # Cosine annealing
+            progress = (self.current_step - self.warmup_steps) / (self.total_steps - self.warmup_steps)
+            lr = self.min_lr + 0.5 * (self.max_lr - self.min_lr) * (1 + math.cos(math.pi * progress))
+
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = lr
+
+        return lr
+
+    def get_lr(self) -> float:
+        """Get current learning rate."""
+        return self.optimizer.param_groups[0]['lr']
 
 
 def sanity_check_overfit_batch(model: nn.Module,
@@ -431,7 +563,8 @@ def train_model(model: nn.Module,
     - Gradient accumulation
     - Early stopping
     - Checkpoint saving
-    - Learning rate scheduling
+    - Learning rate scheduling (ReduceLROnPlateau or CosineAnnealing with warmup)
+    - AdamW optimizer with weight decay
 
     Args:
         model: PyTorch model to train.
@@ -448,10 +581,11 @@ def train_model(model: nn.Module,
             - val_accuracies: List of validation accuracies per epoch
             - best_epoch: Epoch with best validation loss
             - best_val_loss: Best validation loss achieved
+            - learning_rates: List of learning rates per epoch
 
     Example:
         >>> from config import get_config
-        >>> config = get_config()
+        >>> config = get_config('advanced')
         >>> history = train_model(model, train_loader, val_loader, config)
         >>> print(f"Best validation loss: {history['best_val_loss']:.4f}")
     """
@@ -466,6 +600,12 @@ def train_model(model: nn.Module,
     use_mixed_precision = training_config['use_mixed_precision']
     accumulation_steps = training_config['accumulation_steps']
 
+    # Advanced training options
+    use_cosine_schedule = training_config.get('use_cosine_schedule', False)
+    warmup_epochs = training_config.get('warmup_epochs', 0)
+    min_lr = training_config.get('min_lr', 1e-6)
+    label_smoothing = training_config.get('label_smoothing', 0.0)
+
     # Compute class weights to handle class imbalance
     num_classes = config['model']['num_classes']
     print("Computing class weights from training data...")
@@ -474,53 +614,137 @@ def train_model(model: nn.Module,
 
     use_focal = training_config.get('use_focal_loss', False)
     focal_gamma = training_config.get('focal_gamma', 2.0)
-    label_smoothing = training_config.get('label_smoothing', 0.0)
 
     if use_focal:
         criterion = FocalLoss(weight=class_weights, gamma=focal_gamma)
     else:
         criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)
-    optimizer = torch.optim.Adam(
+
+    # Use AdamW for better weight decay handling
+    optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=learning_rate,
-        weight_decay=weight_decay
+        weight_decay=weight_decay,
+        betas=(0.9, 0.999),
+        eps=1e-8
     )
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode='min',
-        factor=0.5,
-        patience=5
-    )
+    # Setup learning rate scheduler
+    steps_per_epoch = len(train_loader) // accumulation_steps
+    total_steps = epochs * steps_per_epoch
+    warmup_steps = warmup_epochs * steps_per_epoch
+
+    if use_cosine_schedule:
+        print(f"Using cosine annealing scheduler with {warmup_epochs} warmup epochs")
+        scheduler = CosineAnnealingWarmupLR(
+            optimizer,
+            warmup_steps=warmup_steps,
+            total_steps=total_steps,
+            max_lr=learning_rate,
+            min_lr=min_lr
+        )
+        use_step_scheduler = True
+    else:
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=0.5,
+            patience=5,
+            min_lr=min_lr
+        )
+        use_step_scheduler = False
 
     scaler = GradScaler(device='cuda') if use_mixed_precision and device == 'cuda' else None
 
     best_val_loss = float('inf')
+    best_val_accuracy = 0.0
     best_epoch = 0
     epochs_without_improvement = 0
 
     train_losses = []
     val_losses = []
     val_accuracies = []
+    learning_rates = []
 
-    print(f"Starting training on {device}")
+    print(f"\n{'='*60}")
+    print(f"TRAINING CONFIGURATION")
+    print(f"{'='*60}")
+    print(f"Device: {device}")
+    print(f"Model type: {config['model']['type']}")
+    print(f"Batch size: {training_config['batch_size']}")
+    print(f"Effective batch size: {training_config['batch_size'] * accumulation_steps}")
+    print(f"Learning rate: {learning_rate}")
+    print(f"Weight decay: {weight_decay}")
     print(f"Mixed precision: {use_mixed_precision}")
     print(f"Gradient accumulation steps: {accumulation_steps}")
+    print(f"Focal loss: {use_focal} (gamma={focal_gamma})")
+    print(f"Label smoothing: {label_smoothing}")
+    print(f"Cosine schedule: {use_cosine_schedule}")
+    if use_cosine_schedule:
+        print(f"Warmup epochs: {warmup_epochs}")
+    print(f"{'='*60}\n")
+
+    print("Starting training...")
 
     for epoch in range(epochs):
-        print(f"\nEpoch {epoch + 1}/{epochs}")
+        current_lr = optimizer.param_groups[0]['lr']
+        learning_rates.append(current_lr)
 
-        train_loss = train_epoch(
-            model,
-            train_loader,
-            criterion,
-            optimizer,
-            device,
-            scaler=scaler,
-            gradient_clip=gradient_clip,
-            accumulation_steps=accumulation_steps
-        )
+        print(f"\nEpoch {epoch + 1}/{epochs} (LR: {current_lr:.2e})")
 
+        # Training
+        model.train()
+        total_loss = 0.0
+        num_batches = 0
+
+        optimizer.zero_grad()
+
+        pbar = tqdm(train_loader, desc="Training")
+        for i, batch in enumerate(pbar):
+            features = batch['features'].to(device)
+            labels = batch['labels'].to(device)
+            seq_lengths = batch['seq_lengths']
+
+            if scaler is not None:
+                with autocast(device_type='cuda' if device == 'cuda' else 'cpu'):
+                    logits, _ = model(features, seq_lengths)
+                    loss = criterion(logits, labels)
+                    loss = loss / accumulation_steps
+            else:
+                logits, _ = model(features, seq_lengths)
+                loss = criterion(logits, labels)
+                loss = loss / accumulation_steps
+
+            if scaler is not None:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
+
+            if (i + 1) % accumulation_steps == 0:
+                if scaler is not None:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+                    optimizer.step()
+
+                optimizer.zero_grad()
+
+                # Step cosine scheduler after each optimizer step
+                if use_step_scheduler:
+                    scheduler.step()
+
+            total_loss += loss.item() * accumulation_steps
+            num_batches += 1
+
+            # Update progress bar
+            pbar.set_postfix({'loss': f'{total_loss/num_batches:.4f}'})
+
+        train_loss = total_loss / num_batches
+
+        # Validation
         val_loss, val_accuracy = validate(model, val_loader, criterion, device)
 
         train_losses.append(train_loss)
@@ -530,9 +754,19 @@ def train_model(model: nn.Module,
         print(f"Train Loss: {train_loss:.4f}")
         print(f"Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}")
 
-        scheduler.step(val_loss)
+        # Step plateau scheduler with validation loss
+        if not use_step_scheduler:
+            scheduler.step(val_loss)
 
-        if val_loss < best_val_loss:
+        # Check for improvement (prioritize accuracy for trading)
+        improved = False
+        if val_accuracy > best_val_accuracy:
+            improved = True
+            best_val_accuracy = val_accuracy
+        elif val_accuracy == best_val_accuracy and val_loss < best_val_loss:
+            improved = True
+
+        if improved:
             best_val_loss = val_loss
             best_epoch = epoch
             epochs_without_improvement = 0
@@ -547,34 +781,42 @@ def train_model(model: nn.Module,
                 val_accuracy=val_accuracy,
                 config=config
             )
-            print(f"Saved best model to {best_model_path}")
+            print(f"Saved best model (acc={val_accuracy:.4f}) to {best_model_path}")
         else:
             epochs_without_improvement += 1
+            print(f"No improvement for {epochs_without_improvement} epoch(s)")
 
-        checkpoint_path = f"{checkpoint_dir}/checkpoint_epoch_{epoch + 1}.pth"
-        save_checkpoint(
-            model,
-            optimizer,
-            epoch,
-            val_loss,
-            checkpoint_path,
-            val_accuracy=val_accuracy
-        )
+        # Save checkpoint every 10 epochs
+        if (epoch + 1) % 10 == 0:
+            checkpoint_path = f"{checkpoint_dir}/checkpoint_epoch_{epoch + 1}.pth"
+            save_checkpoint(
+                model,
+                optimizer,
+                epoch,
+                val_loss,
+                checkpoint_path,
+                val_accuracy=val_accuracy
+            )
 
         if epochs_without_improvement >= patience:
             print(f"\nEarly stopping triggered after {epoch + 1} epochs")
-            print(f"Best validation loss: {best_val_loss:.4f} at epoch {best_epoch + 1}")
+            print(f"Best validation accuracy: {best_val_accuracy:.4f} at epoch {best_epoch + 1}")
             break
 
-    print("\nTraining completed")
+    print("\n" + "="*60)
+    print("TRAINING COMPLETED")
+    print("="*60)
     print(f"Best epoch: {best_epoch + 1}")
     print(f"Best validation loss: {best_val_loss:.4f}")
-    print(f"Best validation accuracy: {val_accuracies[best_epoch]:.4f}")
+    print(f"Best validation accuracy: {best_val_accuracy:.4f}")
+    print("="*60)
 
     return {
         'train_losses': train_losses,
         'val_losses': val_losses,
         'val_accuracies': val_accuracies,
+        'learning_rates': learning_rates,
         'best_epoch': best_epoch,
         'best_val_loss': best_val_loss,
+        'best_val_accuracy': best_val_accuracy,
     }
