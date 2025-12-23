@@ -313,6 +313,10 @@ class AdvancedTransformerLSTMTrader(nn.Module):
         max_seq_len = x.size(1)
         device = x.device
 
+        # Move lengths to device for mask creation, keep CPU copy for pack_padded_sequence
+        lengths_device = lengths.to(device)
+        lengths_cpu = lengths.cpu().clamp(min=1, max=max_seq_len)
+
         # Multi-scale convolution
         x = self.multi_scale_conv(x)
 
@@ -320,11 +324,10 @@ class AdvancedTransformerLSTMTrader(nn.Module):
         x = self.input_proj(x)
         x = self.input_norm(x)
 
-        # Pack for LSTM - ensure lengths are valid (at least 1, at most max_seq_len)
-        valid_lengths = lengths.cpu().clamp(min=1, max=max_seq_len)
+        # Pack for LSTM - pack_padded_sequence requires CPU lengths
         packed = pack_padded_sequence(
             x,
-            valid_lengths,
+            lengths_cpu,
             batch_first=True,
             enforce_sorted=False,
         )
@@ -337,10 +340,10 @@ class AdvancedTransformerLSTMTrader(nn.Module):
         x = self.lstm_norm(lstm_out)
         x = self.pos_encoder(x)
 
-        # Create padding mask for transformer
-        mask = torch.arange(x.size(1), device=x.device).unsqueeze(
+        # Create padding mask for transformer (use device lengths)
+        mask = torch.arange(x.size(1), device=device).unsqueeze(
             0
-        ) >= lengths.unsqueeze(1)
+        ) >= lengths_device.unsqueeze(1)
 
         # Transformer encoder layers
         for transformer_layer in self.transformer_layers:
@@ -412,14 +415,17 @@ class AdvancedTransformerLSTMTrader(nn.Module):
             max_seq_len = x.size(1)
             device = x.device
 
+            # Move lengths to device for mask creation, keep CPU copy for pack_padded_sequence
+            lengths_device = lengths.to(device)
+            lengths_cpu = lengths.cpu().clamp(min=1, max=max_seq_len)
+
             x = self.multi_scale_conv(x)
             x = self.input_proj(x)
             x = self.input_norm(x)
 
-            valid_lengths = lengths.cpu().clamp(min=1, max=max_seq_len)
             packed = pack_padded_sequence(
                 x,
-                valid_lengths,
+                lengths_cpu,
                 batch_first=True,
                 enforce_sorted=False,
             )
@@ -431,7 +437,7 @@ class AdvancedTransformerLSTMTrader(nn.Module):
 
             mask = torch.arange(x.size(1), device=device).unsqueeze(
                 0
-            ) >= lengths.unsqueeze(1)
+            ) >= lengths_device.unsqueeze(1)
 
             for transformer_layer in self.transformer_layers:
                 x = transformer_layer(x, mask)
