@@ -490,6 +490,9 @@ class TradingDataset(Dataset):
 # Maximum sequence length for truncation (prevents OOM and LSTM padding issues)
 MAX_SEQ_LEN: int = 128
 
+# Feature indices that need re-normalization after truncation
+LOG_CLOSE_INDEX: int = 0  # log_close is relative to first candle
+
 
 def collate_variable_length(batch: List[Dict[str, Any]], max_seq_len: int = MAX_SEQ_LEN) -> Dict[str, torch.Tensor]:
     """
@@ -497,6 +500,7 @@ def collate_variable_length(batch: List[Dict[str, Any]], max_seq_len: int = MAX_
 
     Pads sequences to the same length within a batch for efficient processing.
     Truncates long sequences to max_seq_len, keeping the most recent candles.
+    Re-normalizes log_close feature after truncation to maintain relative scaling.
 
     Args:
         batch: List of samples from TradingDataset.
@@ -523,6 +527,13 @@ def collate_variable_length(batch: List[Dict[str, Any]], max_seq_len: int = MAX_
         # Truncate to max_seq_len, keeping the most recent (end) candles
         if seq_len > max_seq_len:
             feat = feat[-max_seq_len:]  # Keep last max_seq_len candles
+            
+            # CRITICAL: Re-normalize log_close feature
+            # log_close is relative to the original first candle, but that candle
+            # is no longer in our truncated sequence. Shift so first value is 0.
+            log_close_offset = feat[0, LOG_CLOSE_INDEX].clone()
+            feat[:, LOG_CLOSE_INDEX] = feat[:, LOG_CLOSE_INDEX] - log_close_offset
+            
             seq_len = max_seq_len
         
         features.append(feat)
