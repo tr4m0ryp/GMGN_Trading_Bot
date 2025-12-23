@@ -25,6 +25,7 @@ from typing import Tuple, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
 class PositionalEncoding(nn.Module):
@@ -312,8 +313,9 @@ class AdvancedTransformerLSTMTrader(nn.Module):
         max_seq_len = x.size(1)
         device = x.device
 
-        # Move lengths to device for mask creation
+        # Move lengths to device for mask creation, clamp for safety
         lengths_device = lengths.to(device).clamp(min=1, max=max_seq_len)
+        lengths_cpu = lengths.cpu().clamp(min=1, max=max_seq_len)
 
         # Multi-scale convolution
         x = self.multi_scale_conv(x)
@@ -322,11 +324,20 @@ class AdvancedTransformerLSTMTrader(nn.Module):
         x = self.input_proj(x)
         x = self.input_norm(x)
 
-        # Bidirectional LSTM (run on padded sequences - compatible with autocast)
-        # Note: Not using pack_padded_sequence for mixed precision compatibility
-        lstm_out, _ = self.lstm(x)
+        # Bidirectional LSTM with packed sequences
+        # Disable autocast for LSTM to use pack_padded_sequence correctly
+        with torch.amp.autocast('cuda', enabled=False):
+            x_float = x.float()  # Ensure float32 for LSTM
+            packed = pack_padded_sequence(
+                x_float,
+                lengths_cpu,
+                batch_first=True,
+                enforce_sorted=False,
+            )
+            lstm_out, _ = self.lstm(packed)
+            lstm_out, _ = pad_packed_sequence(lstm_out, batch_first=True)
 
-        # Normalize and add positional encoding
+        # Normalize and add positional encoding (back to mixed precision)
         x = self.lstm_norm(lstm_out)
         x = self.pos_encoder(x)
 
@@ -407,13 +418,22 @@ class AdvancedTransformerLSTMTrader(nn.Module):
 
             # Move lengths to device for mask creation
             lengths_device = lengths.to(device).clamp(min=1, max=max_seq_len)
+            lengths_cpu = lengths.cpu().clamp(min=1, max=max_seq_len)
 
             x = self.multi_scale_conv(x)
             x = self.input_proj(x)
             x = self.input_norm(x)
 
-            # Bidirectional LSTM (run on padded sequences)
-            lstm_out, _ = self.lstm(x)
+            # Bidirectional LSTM with packed sequences (no autocast for inference)
+            x_float = x.float()
+            packed = pack_padded_sequence(
+                x_float,
+                lengths_cpu,
+                batch_first=True,
+                enforce_sorted=False,
+            )
+            lstm_out, _ = self.lstm(packed)
+            lstm_out, _ = pad_packed_sequence(lstm_out, batch_first=True)
 
             x = self.lstm_norm(lstm_out)
             x = self.pos_encoder(x)

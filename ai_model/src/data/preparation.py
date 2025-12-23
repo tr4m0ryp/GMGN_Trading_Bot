@@ -487,20 +487,24 @@ class TradingDataset(Dataset):
             Dictionary containing features, label, and metadata.
         """
         return self.samples[idx]
+# Maximum sequence length for truncation (prevents OOM and LSTM padding issues)
+MAX_SEQ_LEN: int = 128
 
 
-def collate_variable_length(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+def collate_variable_length(batch: List[Dict[str, Any]], max_seq_len: int = MAX_SEQ_LEN) -> Dict[str, torch.Tensor]:
     """
     Collate function for DataLoader with variable-length sequences.
 
     Pads sequences to the same length within a batch for efficient processing.
+    Truncates long sequences to max_seq_len, keeping the most recent candles.
 
     Args:
         batch: List of samples from TradingDataset.
+        max_seq_len: Maximum sequence length. Longer sequences are truncated.
 
     Returns:
         Dictionary with padded tensors:
-            - features: (batch, max_seq_len, 15)
+            - features: (batch, max_seq_len, 14)
             - labels: (batch,)
             - seq_lengths: (batch,)
 
@@ -509,9 +513,23 @@ def collate_variable_length(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tens
         >>> for batch in loader:
         ...     print(batch['features'].shape)
     """
-    features = [torch.FloatTensor(item['features']) for item in batch]
+    features = []
+    actual_lengths = []
+    
+    for item in batch:
+        feat = torch.FloatTensor(item['features'])
+        seq_len = feat.size(0)
+        
+        # Truncate to max_seq_len, keeping the most recent (end) candles
+        if seq_len > max_seq_len:
+            feat = feat[-max_seq_len:]  # Keep last max_seq_len candles
+            seq_len = max_seq_len
+        
+        features.append(feat)
+        actual_lengths.append(seq_len)
+    
     labels = torch.LongTensor([item['label'] for item in batch])
-    seq_lengths = torch.LongTensor([item['seq_length'] for item in batch])
+    seq_lengths = torch.LongTensor(actual_lengths)
 
     padded_features = pad_sequence(features, batch_first=True, padding_value=0.0)
 
