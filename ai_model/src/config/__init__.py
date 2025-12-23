@@ -84,30 +84,30 @@ ADVANCED_CONFIG: Dict[str, Any] = {
     'model': {
         'type': 'transformer_lstm',
         'input_size': 14,
-        'hidden_size': 512,           # 4x larger hidden dimension
-        'num_lstm_layers': 3,         # Bidirectional LSTM layers
-        'num_transformer_layers': 4,  # Transformer encoder layers
-        'num_heads': 8,               # Multi-head attention heads
+        'hidden_size': 384,            # Reduced for memory efficiency with padded sequences
+        'num_lstm_layers': 2,          # Reduced LSTM layers
+        'num_transformer_layers': 4,   # Transformer encoder layers
+        'num_heads': 8,                # Multi-head attention heads
         'num_classes': 3,
-        'dropout': 0.4,               # Higher dropout for regularization
-        'ff_mult': 4,                 # Feed-forward multiplier
+        'dropout': 0.4,                # Higher dropout for regularization
+        'ff_mult': 4,                  # Feed-forward multiplier
     },
     'training': {
-        'batch_size': 256,            # 4x larger batch size for T4 GPU
-        'learning_rate': 1e-4,        # Lower LR for larger model
-        'min_lr': 1e-6,               # Minimum learning rate
-        'warmup_epochs': 5,           # Warmup epochs for LR
-        'epochs': 150,                # More epochs with early stopping
+        'batch_size': 64,              # Reduced batch size to avoid OOM
+        'learning_rate': 1e-4,         # Lower LR for larger model
+        'min_lr': 1e-6,                # Minimum learning rate
+        'warmup_epochs': 5,            # Warmup epochs for LR
+        'epochs': 150,                 # More epochs with early stopping
         'early_stopping_patience': 20,
         'gradient_clip_value': 1.0,
-        'weight_decay': 0.01,         # Higher weight decay (AdamW style)
+        'weight_decay': 0.01,          # Higher weight decay (AdamW style)
         'use_mixed_precision': True,
-        'accumulation_steps': 2,      # Effective batch = 512
+        'accumulation_steps': 4,       # Increased to maintain effective batch = 256
         'use_focal_loss': True,
-        'focal_gamma': 2.5,           # Stronger focus on hard examples
-        'label_smoothing': 0.1,       # Label smoothing for regularization
+        'focal_gamma': 2.5,            # Stronger focus on hard examples
+        'label_smoothing': 0.1,        # Label smoothing for regularization
         'use_weighted_sampler': True,
-        'use_cosine_schedule': True,  # Cosine annealing with warmup
+        'use_cosine_schedule': True,   # Cosine annealing with warmup
     },
     'data': {
         'min_history_length': MIN_HISTORY_LENGTH,
@@ -124,12 +124,12 @@ ADVANCED_CONFIG: Dict[str, Any] = {
         'take_profit_pct': TAKE_PROFIT_PCT,
         'stop_loss_pct': STOP_LOSS_PCT,
         'trail_backoff_pct': TRAIL_BACKOFF_PCT,
-        'confidence_threshold': 0.6,  # Lower threshold with better model
+        'confidence_threshold': 0.6,   # Lower threshold with better model
     },
     'dataloader': {
-        'num_workers': 2,             # Reduced for Colab
+        'num_workers': 2,              # Reduced for Colab
         'pin_memory': True,
-        'persistent_workers': False,  # Disabled for Colab stability
+        'persistent_workers': False,   # Disabled for Colab stability
         'prefetch_factor': 2,
     },
 }
