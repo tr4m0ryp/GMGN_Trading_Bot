@@ -164,10 +164,10 @@ def train_rl_agent(
     output_dir: str,
     total_timesteps: int = 2_000_000,
     learning_rate: float = 3e-4,
-    n_envs: int = 16,
+    n_envs: int = 32,  # Increased for better GPU utilization
     eval_freq: int = 10000,
     save_freq: int = 50000,
-    device: str = 'auto',
+    device: str = 'cuda',  # Default to CUDA for T4 GPU
     verbose: int = 1,
     curriculum_episodes: int = 1000,
     use_recurrent: bool = True,
@@ -239,14 +239,15 @@ def train_rl_agent(
 
     if use_lstm:
         print("Creating RecurrentPPO agent with LSTM for temporal patterns...")
+        print(f"Optimizing for T4 GPU (14GB VRAM)...")
 
-        # RecurrentPPO uses different policy kwargs
+        # RecurrentPPO uses different policy kwargs - optimized for T4 14GB
         policy_kwargs = {
-            "lstm_hidden_size": 256,
+            "lstm_hidden_size": 512,  # Larger LSTM for T4
             "n_lstm_layers": 2,
             "shared_lstm": False,
             "enable_critic_lstm": True,
-            "net_arch": dict(pi=[256, 128], vf=[256, 128]),
+            "net_arch": dict(pi=[512, 256], vf=[512, 256]),  # Larger networks
             "activation_fn": torch.nn.GELU,
         }
 
@@ -254,8 +255,8 @@ def train_rl_agent(
             "MlpLstmPolicy",
             train_env,
             learning_rate=learning_rate,
-            n_steps=128,  # Smaller for LSTM (captures sequence better)
-            batch_size=64,
+            n_steps=512,  # Large rollout: 512 * 32 = 16384 samples
+            batch_size=512,  # Large batches for T4 GPU
             n_epochs=10,
             gamma=0.99,
             gae_lambda=0.95,
@@ -270,24 +271,27 @@ def train_rl_agent(
             device=device,
         )
 
-        print(f"\nRecurrentPPO (LSTM) Hyperparameters:")
-        print(f"  LSTM Hidden Size: 256")
+        print(f"\nRecurrentPPO (LSTM) - T4 GPU Optimized:")
+        print(f"  LSTM Hidden Size: 512 (large for T4)")
         print(f"  LSTM Layers: 2")
+        print(f"  Policy Network: [512, 256]")
         print(f"  Learning Rate: {learning_rate}")
-        print(f"  N Steps: 128 (smaller for LSTM)")
-        print(f"  Batch Size: 64")
+        print(f"  N Steps: 512 (512 * {n_envs} = {512 * n_envs} samples/rollout)")
+        print(f"  Batch Size: 512 (T4 optimized)")
         print(f"  Entropy Coef: 0.05 (high for exploration)")
         print(f"  Parallel Environments: {n_envs}")
+        print(f"  Device: {device}")
 
     else:
         print("Creating PPO agent with improved hyperparameters...")
+        print(f"Optimizing for T4 GPU (14GB VRAM)...")
         if use_recurrent and not RECURRENT_AVAILABLE:
             print("  (RecurrentPPO unavailable, using standard PPO)")
 
         policy_kwargs = {
             "features_extractor_class": AdvancedTradingFeaturesExtractor,
-            "features_extractor_kwargs": {"features_dim": 256},
-            "net_arch": dict(pi=[256, 128], vf=[256, 128]),
+            "features_extractor_kwargs": {"features_dim": 512},  # Larger for T4
+            "net_arch": dict(pi=[512, 256], vf=[512, 256]),  # Larger networks
             "activation_fn": torch.nn.GELU,
         }
 
@@ -296,7 +300,7 @@ def train_rl_agent(
             train_env,
             learning_rate=learning_rate,
             n_steps=2048,
-            batch_size=128,
+            batch_size=1024,  # Very large batches for T4
             n_epochs=10,
             gamma=0.99,
             gae_lambda=0.95,
@@ -311,12 +315,14 @@ def train_rl_agent(
             device=device,
         )
 
-        print(f"\nPPO Hyperparameters:")
+        print(f"\nPPO - T4 GPU Optimized:")
+        print(f"  Policy Network: [512, 256]")
         print(f"  Learning Rate: {learning_rate}")
-        print(f"  N Steps: 2048")
-        print(f"  Batch Size: 128")
+        print(f"  N Steps: 2048 (2048 * {n_envs} = {2048 * n_envs} samples/rollout)")
+        print(f"  Batch Size: 1024 (T4 optimized)")
         print(f"  Entropy Coef: 0.05 (high for exploration)")
         print(f"  Parallel Environments: {n_envs}")
+        print(f"  Device: {device}")
 
     print(f"  Curriculum Episodes: {curriculum_episodes}")
 
