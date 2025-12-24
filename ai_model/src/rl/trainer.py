@@ -64,10 +64,14 @@ def load_token_candles(data_dir: str) -> List[List[Dict[str, float]]]:
         engine='python'
     )
 
+    # Detect correct column name (chart_data_json for new data, candles for old)
+    candle_col = 'chart_data_json' if 'chart_data_json' in df.columns else 'candles'
+    print(f"Using candle column: {candle_col}")
+
     all_candles = []
     for idx in range(len(df)):
         try:
-            candles = parse_candles(df.iloc[idx]['candles'])
+            candles = parse_candles(df.iloc[idx][candle_col])
             if len(candles) >= 50:
                 all_candles.append(candles)
         except Exception:
