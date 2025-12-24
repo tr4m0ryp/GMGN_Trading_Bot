@@ -91,21 +91,63 @@ def parse_candles(candles_json: str) -> List[Dict[str, float]]:
     """
     Parse candles JSON string into list of dictionaries.
 
+    Handles the GMGN API response format where candles are nested in data.list,
+    and converts from long key names (open/close/high/low/volume/time) to 
+    short format (o/c/h/l/v/t) with proper float conversion.
+
     Args:
-        candles_json: JSON string containing candle data.
+        candles_json: JSON string containing candle data (either raw list or API response).
 
     Returns:
-        List of candle dictionaries with keys: t, o, h, l, c, v.
+        List of candle dictionaries with keys: t, o, h, l, c, v (all numeric).
 
     Raises:
         json.JSONDecodeError: If JSON string is invalid.
+        ValueError: If candle data cannot be extracted.
 
     Example:
-        >>> candles = parse_candles('[{"t":1234,"o":100,"h":110,"l":95,"c":105,"v":1000}]')
-        >>> print(len(candles))
-        1
+        >>> candles = parse_candles('{"data":{"list":[{"time":1234,"open":"100",...}]}}')
+        >>> print(candles[0]['c'])  # Returns float, not string
+        105.0
     """
-    return json.loads(candles_json)
+    data = json.loads(candles_json)
+    
+    # Handle nested API response format from GMGN
+    if isinstance(data, dict):
+        if 'data' in data and isinstance(data['data'], dict) and 'list' in data['data']:
+            raw_candles = data['data']['list']
+        elif 'list' in data:
+            raw_candles = data['list']
+        else:
+            raise ValueError(f"Cannot extract candles from dict with keys: {data.keys()}")
+    elif isinstance(data, list):
+        raw_candles = data
+    else:
+        raise ValueError(f"Unknown candle format: {type(data)}")
+    
+    if not raw_candles:
+        return []
+    
+    # Convert to expected format with short keys and float values
+    candles = []
+    for c in raw_candles:
+        try:
+            candle = {
+                't': int(c.get('time', c.get('t', 0))),
+                'o': float(c.get('open', c.get('o', 0))),
+                'h': float(c.get('high', c.get('h', 0))),
+                'l': float(c.get('low', c.get('l', 0))),
+                'c': float(c.get('close', c.get('c', 0))),
+                'v': float(c.get('volume', c.get('v', 0))),
+            }
+            # Skip invalid candles (zero prices)
+            if candle['c'] > 0 and candle['o'] > 0:
+                candles.append(candle)
+        except (ValueError, TypeError) as e:
+            # Skip malformed candles
+            continue
+    
+    return candles
 
 
 def calculate_rsi(prices: np.ndarray, period: int = 14) -> np.ndarray:
