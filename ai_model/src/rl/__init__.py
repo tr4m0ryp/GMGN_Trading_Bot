@@ -48,7 +48,7 @@ Author: Trading Team
 Date: 2025-12-23
 """
 
-from .environment import TradingEnvironmentV2, CurriculumTradingEnvironment
+from .environment import TradingEnvironmentV2, TradingEnvironmentSimplified, CurriculumTradingEnvironment
 from .agent import (
     RLTradingAgent,
     TradingFeaturesExtractor,
@@ -60,6 +60,7 @@ from .trainer import train_rl_agent
 
 __all__ = [
     'TradingEnvironmentV2',
+    'TradingEnvironmentSimplified',
     'CurriculumTradingEnvironment',
     'RLTradingAgent',
     'TradingFeaturesExtractor',

@@ -39,7 +39,7 @@ from stable_baselines3.common.callbacks import (
 )
 from stable_baselines3.common.monitor import Monitor
 
-from .environment import TradingEnvironmentV2, CurriculumTradingEnvironment, MultiTokenEvalEnvironment
+from .environment import TradingEnvironmentV2, TradingEnvironmentSimplified, CurriculumTradingEnvironment, MultiTokenEvalEnvironment
 from .agent import (
     TradingFeaturesExtractor,
     AdvancedTradingFeaturesExtractor,
@@ -123,6 +123,7 @@ def create_curriculum_envs(
     n_envs: int = 8,
     curriculum_episodes: int = 1000,
     use_subproc: bool = False,  # Changed default to False for memory efficiency
+    use_simplified_reward: bool = False,  # NEW: Use simplified reward system
 ) -> DummyVecEnv:
     """
     Create vectorized curriculum environments.
@@ -144,7 +145,22 @@ def create_curriculum_envs(
 
     def make_env(seed: int):
         def _init():
-            env = CurriculumTradingEnvironment(
+            # Choose base environment based on reward system
+            BaseEnvClass = TradingEnvironmentSimplified if use_simplified_reward else TradingEnvironmentV2
+            
+            # Create curriculum wrapper that uses the selected environment
+            class CurriculumEnv(CurriculumTradingEnvironment):
+                def _create_env(self, token_idx: int) -> None:
+                    candles = self.all_candles[token_idx]
+                    self.current_token_idx = token_idx
+                    self.current_fee_mult = self._get_current_fee_mult()
+                    self.current_env = BaseEnvClass(
+                        candles,
+                        fee_multiplier=self.current_fee_mult,
+                        **self.env_kwargs
+                    )
+            
+            env = CurriculumEnv(
                 all_candles,
                 initial_fee_mult=0.0,
                 target_fee_mult=1.0,
@@ -178,6 +194,7 @@ def train_rl_agent(
     use_recurrent: bool = True,
     use_subproc: bool = False,  # GPU-optimized: DummyVecEnv avoids RAM duplication
     use_hybrid: bool = False,  # NEW: Use Hybrid LSTM + Attention for max win rate
+    use_simplified_reward: bool = False,  # NEW: Use simplified reward system for A/B testing
 ) -> Dict[str, Any]:
     """
     Train RL agent optimized for GPU utilization and maximum win rate.
@@ -234,6 +251,7 @@ def train_rl_agent(
         n_envs=n_envs,
         curriculum_episodes=curriculum_episodes,
         use_subproc=use_subproc,
+        use_simplified_reward=use_simplified_reward,
     )
     # Use MultiTokenEvalEnvironment to evaluate across ALL eval tokens (not just one)
     # This ensures proper generalization testing and meaningful variance in metrics
