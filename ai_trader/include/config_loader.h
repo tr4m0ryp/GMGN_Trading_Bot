@@ -54,6 +54,12 @@ typedef struct {
     /* Jito Settings */
     char jito_endpoint[256];        /* Jito block engine URL */
     uint64_t jito_tip_lamports;     /* Tip amount in lamports */
+
+    /* Telegram Bot Settings */
+    char telegram_bot_token[128];   /* Bot API token */
+    char telegram_chat_id[64];      /* Chat ID for notifications */
+    bool telegram_notify_trades;    /* Notify on trades */
+    bool telegram_notify_errors;    /* Notify on errors */
 } trader_config_t;
 
 /**

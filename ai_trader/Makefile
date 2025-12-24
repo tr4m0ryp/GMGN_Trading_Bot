@@ -5,7 +5,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -Werror -O2 -std=c11 -D_GNU_SOURCE
 CFLAGS += -I./include -I../logger_c/include
-LDFLAGS = -lpthread -lcurl -lcjson -lm
+LDFLAGS = -lpthread -lcurl -lcjson -lm -lsodium
 
 # Debug build
 DEBUG_CFLAGS = -g -O0 -DDEBUG -fsanitize=address
@@ -23,6 +23,9 @@ SRCS = $(SRC_DIR)/config_loader.c \
        $(SRC_DIR)/model_loader.c \
        $(SRC_DIR)/jito_client.c \
        $(SRC_DIR)/logger_integration.c \
+       $(SRC_DIR)/base58.c \
+       $(SRC_DIR)/solana_wallet.c \
+       $(SRC_DIR)/telegram_bot.c \
        $(SRC_DIR)/ai_trader.c
 
 OBJS = $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)

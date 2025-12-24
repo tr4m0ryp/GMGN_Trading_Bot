@@ -130,6 +130,10 @@ void config_set_defaults(trader_config_t *config) {
 
     safe_strcpy(config->jito_endpoint, sizeof(config->jito_endpoint),
                 "https://amsterdam.mainnet.block-engine.jito.wtf");
+
+    /* Telegram defaults */
+    config->telegram_notify_trades = true;
+    config->telegram_notify_errors = true;
 }
 
 int config_load(trader_config_t *config, const char *env_path) {
@@ -203,6 +207,19 @@ int config_load(trader_config_t *config, const char *env_path) {
         }
         else if (strcmp(key, "JITO_TIP_LAMPORTS") == 0) {
             config->jito_tip_lamports = (uint64_t)atoll(value);
+        }
+        /* Telegram settings */
+        else if (strcmp(key, "TELEGRAM_BOT_TOKEN") == 0) {
+            safe_strcpy(config->telegram_bot_token, sizeof(config->telegram_bot_token), value);
+        }
+        else if (strcmp(key, "TELEGRAM_CHAT_ID") == 0) {
+            safe_strcpy(config->telegram_chat_id, sizeof(config->telegram_chat_id), value);
+        }
+        else if (strcmp(key, "TELEGRAM_NOTIFY_TRADES") == 0) {
+            config->telegram_notify_trades = parse_bool(value);
+        }
+        else if (strcmp(key, "TELEGRAM_NOTIFY_ERRORS") == 0) {
+            config->telegram_notify_errors = parse_bool(value);
         }
     }
 

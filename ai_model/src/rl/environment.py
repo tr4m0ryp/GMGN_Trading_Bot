@@ -1,14 +1,22 @@
 """
-Improved trading environment with advanced reward shaping.
+Trading environment V5.1 with enhanced profit-maximizing reward system.
 
-This version addresses policy collapse by:
-1. Hindsight rewards - penalize for missing profitable opportunities
-2. Potential-based reward shaping - smooth learning signal
-3. Curriculum learning - gradually introduce fees
-4. Exploration bonuses - encourage trying actions
+V5.1 Reward System Key Features:
+1. Trading is ALWAYS positive - base reward ensures minimum +0.05 per trade
+2. Profits scale significantly - +3% return = +2.0, +10% = +4.8 reward
+3. Win rate bonuses - up to +3.0 for 95%+ win rate
+4. Catastrophic no-trade penalty - 0 trades = -35.0
+5. Sweet spot bonus - +1.0 for 3-5 trades per coin
+
+V5.1 Improvements over V5:
+6. Higher win_bonus_cap (1.5 vs 0.5) - rewards exceptional trades
+7. WR + Profit synergy bonus - up to +2.0 for combined performance
+8. Quick trade bonus (+0.3) - rewards fast profitable exits
+9. Stronger over-trading penalty - scales with excess trades
+10. Configurable loss_scale parameter
 
 Author: Trading Team
-Date: 2025-12-23
+Date: 2025-12-24
 """
 
 from typing import Dict, Tuple, List, Any, Optional
@@ -88,16 +96,23 @@ class TradingEnvironmentV2(gym.Env):
         opportunity_penalty: float = 0.01,  # Penalty for missing opportunities
         min_trades_required: int = 3,  # Minimum trades target (3-5 optimal)
         max_trades_target: int = 5,  # Maximum trades before diminishing returns
-        # V5 Reward System Parameters
+        # V5.1 Reward System Parameters
         base_trade_reward: float = 0.3,  # Base reward for ANY completed trade
         profit_scale: float = 30.0,  # Scale factor for profit component
         win_bonus_base: float = 0.5,  # Base bonus for winning trades
         win_bonus_scale: float = 10.0,  # Scale for additional win bonus
+        win_bonus_cap: float = 1.5,  # Cap for win bonus (was 0.5, now higher for big wins)
+        loss_scale: float = 15.0,  # Scale factor for loss penalty (configurable)
         loss_cap: float = -0.25,  # Maximum loss penalty (minimum reward = 0.3 - 0.25 = 0.05)
         sweet_spot_bonus: float = 1.0,  # Bonus for hitting 3-5 trade sweet spot
         missing_trade_penalty: float = 10.0,  # Penalty per missing trade below minimum
         zero_trade_extra: float = 5.0,  # Extra penalty for 0 trades
         momentum_reward_scale: float = 0.002,  # Momentum tracking scale
+        # V5.1 New Features
+        synergy_scale: float = 5.0,  # Scale for WR + Profit synergy bonus
+        quick_trade_threshold: int = 30,  # Steps for quick trade bonus
+        quick_trade_bonus: float = 0.3,  # Max bonus for quick profitable trades
+        overtrade_penalty_scale: float = 0.3,  # Penalty per excess trade beyond 8
     ):
         super().__init__()
 
@@ -111,16 +126,24 @@ class TradingEnvironmentV2(gym.Env):
         self.min_trades_required = min_trades_required
         self.max_trades_target = max_trades_target
 
-        # V5 Reward System Parameters
+        # V5.1 Reward System Parameters
         self.base_trade_reward = base_trade_reward
         self.profit_scale = profit_scale
         self.win_bonus_base = win_bonus_base
         self.win_bonus_scale = win_bonus_scale
+        self.win_bonus_cap = win_bonus_cap
+        self.loss_scale = loss_scale
         self.loss_cap = loss_cap
         self.sweet_spot_bonus = sweet_spot_bonus
         self.missing_trade_penalty = missing_trade_penalty
         self.zero_trade_extra = zero_trade_extra
         self.momentum_reward_scale = momentum_reward_scale
+
+        # V5.1 New Features
+        self.synergy_scale = synergy_scale
+        self.quick_trade_threshold = quick_trade_threshold
+        self.quick_trade_bonus = quick_trade_bonus
+        self.overtrade_penalty_scale = overtrade_penalty_scale
 
         # Win rate bonus thresholds (percentage: bonus)
         self.win_rate_bonuses = {
@@ -285,29 +308,40 @@ class TradingEnvironmentV2(gym.Env):
                 self.total_pnl += trade_pnl
                 self.n_trades += 1
 
-                # V5 Per-Trade Reward System
-                # ==========================
+                # V5.1 Per-Trade Reward System
+                # =============================
                 # Trading is ALWAYS positive: base_trade_reward (0.3) ensures minimum reward
                 # Losses are capped: loss_cap (-0.25) limits downside
                 # Profits scale significantly: profit_scale (30.0) rewards good trades
+                # NEW: Higher win_bonus_cap (1.5) rewards exceptional trades
+                # NEW: Quick trade bonus for fast profitable exits
+
+                hold_duration = self.current_step - self.entry_step
 
                 if trade_return > 0:
                     # WINNING TRADE
-                    # Formula: base (0.3) + profit_component + win_bonus
+                    # Formula: base (0.3) + profit_component + win_bonus + quick_bonus
                     # Example: +3% return = 0.3 + 0.9 + 0.8 = +2.0
+                    # Example: +10% return = 0.3 + 3.0 + 1.5 = +4.8 (was capped at +2.3!)
                     self.n_wins += 1
                     profit_component = trade_return * self.profit_scale
                     win_bonus = self.win_bonus_base + min(
-                        self.win_bonus_base,  # Cap at 0.5 additional
+                        self.win_bonus_cap,  # Higher cap (1.5) for exceptional trades
                         trade_return * self.win_bonus_scale
                     )
                     reward = self.base_trade_reward + profit_component + win_bonus
+
+                    # QUICK TRADE BONUS: Reward fast profitable exits
+                    if hold_duration <= self.quick_trade_threshold:
+                        # Scale bonus: faster = more bonus (max at instant, 0 at threshold)
+                        time_factor = 1.0 - (hold_duration / self.quick_trade_threshold)
+                        reward += self.quick_trade_bonus * time_factor
                 else:
                     # LOSING TRADE
-                    # Formula: base (0.3) + max(loss_cap, return × 15)
+                    # Formula: base (0.3) + max(loss_cap, return × loss_scale)
                     # Example: -3% loss = 0.3 + max(-0.25, -0.45) = +0.05
                     # Minimum possible reward: 0.3 - 0.25 = +0.05 (always positive!)
-                    loss_penalty = max(self.loss_cap, trade_return * 15.0)
+                    loss_penalty = max(self.loss_cap, trade_return * self.loss_scale)
                     reward = self.base_trade_reward + loss_penalty
 
                 self.in_position = False
@@ -340,7 +374,7 @@ class TradingEnvironmentV2(gym.Env):
         if self.current_step >= self.n_candles - DELAY_SECONDS - 1:
             terminated = True
 
-            # Force close position
+            # Force close position using V5.1 reward logic
             if self.in_position:
                 sell_price = self._get_current_price()
                 trade_pnl = self._calculate_trade_pnl(self.entry_price, sell_price)
@@ -348,60 +382,75 @@ class TradingEnvironmentV2(gym.Env):
                 self.total_pnl += trade_pnl
                 self.n_trades += 1
 
-                if self.use_binary_rewards:
-                    if trade_return > 0:
-                        self.n_wins += 1
-                        reward += 0.5  # Smaller reward for forced close
-                    else:
-                        reward -= 0.3
+                # V5.1 reward for forced close (same logic as normal sell)
+                if trade_return > 0:
+                    self.n_wins += 1
+                    profit_component = trade_return * self.profit_scale
+                    win_bonus = self.win_bonus_base + min(
+                        self.win_bonus_cap, trade_return * self.win_bonus_scale
+                    )
+                    reward += self.base_trade_reward + profit_component + win_bonus
                 else:
-                    if trade_pnl > 0:
-                        self.n_wins += 1
-                        reward += trade_pnl * 100 * self.win_bonus_multiplier
-                    else:
-                        reward += trade_pnl * 100
+                    loss_penalty = max(self.loss_cap, trade_return * self.loss_scale)
+                    reward += self.base_trade_reward + loss_penalty
 
-            # End-of-episode bonus for optimal trade frequency (3-5 trades)
+            # V5.1 End-of-Episode Bonuses
+            # ============================
             if self.n_trades >= self.min_trades_required:
-                # Trade frequency shaping: optimal at 3-5 trades
+                # SWEET SPOT BONUS: 3-5 trades per coin
                 if self.min_trades_required <= self.n_trades <= self.max_trades_target:
-                    # Sweet spot: 3-5 trades per coin - maximum bonus
-                    reward += self.trade_frequency_bonus
+                    reward += self.sweet_spot_bonus  # +1.0
                 elif self.n_trades <= self.max_trades_target + 3:
-                    # 6-8 trades: acceptable but diminishing bonus
-                    reward += self.trade_frequency_bonus * 0.6
+                    # 6-8 trades: reduced bonus
+                    reward += self.sweet_spot_bonus * 0.5
                 else:
-                    # Over-trading (>8): small penalty
-                    reward -= 0.15
+                    # OVER-TRADING PENALTY: Scales with excess trades
+                    # 9 trades: -0.2 - 0.3 = -0.5
+                    # 10 trades: -0.2 - 0.6 = -0.8
+                    # 12 trades: -0.2 - 1.2 = -1.4
+                    excess_trades = self.n_trades - self.max_trades_target - 3
+                    reward -= 0.2 + (excess_trades * self.overtrade_penalty_scale)
 
-                # Win rate bonus (scales with trade count)
+                # WIN RATE BONUS: Tiered system for high win rates
                 current_win_rate = self.n_wins / self.n_trades
-                if current_win_rate >= 0.9:
-                    reward += 1.2  # Big bonus for 90%+ win rate
-                elif current_win_rate >= 0.8:
-                    reward += 0.8  # Good bonus for 80%+ win rate
-                elif current_win_rate >= 0.7:
-                    reward += 0.4  # Smaller bonus for 70%+ win rate
-                elif current_win_rate >= 0.5:
-                    reward += 0.1  # Small bonus for 50%+ win rate
+                for threshold, bonus in sorted(
+                    self.win_rate_bonuses.items(), reverse=True
+                ):
+                    if current_win_rate >= threshold:
+                        reward += bonus
+                        break
 
-                # Profit magnitude bonus at end of episode
+                # PROFIT MAGNITUDE BONUS: Up to +2.0 for profitable episodes
                 if self.total_pnl > 0:
-                    profit_bonus = min(1.5, self.total_pnl * 15)  # Increased cap
+                    profit_bonus = min(2.0, self.total_pnl * 20)
                     reward += profit_bonus
-            else:
-                # CATASTROPHIC penalty for being too passive (< 3 trades)
-                # This MUST be worse than ANY trading outcome to prevent no-trade collapse
-                missing_trades = self.min_trades_required - self.n_trades
-                passive_penalty = missing_trades * self.no_trade_penalty
 
-                # MASSIVE extra penalty for 0 trades - absolutely unacceptable
+                    # NEW V5.1: SYNERGY BONUS - High WR + High Profit = Extra Reward
+                    # This teaches the model that BOTH metrics matter together
+                    # Example: 90% WR + $0.10 profit = 0.90 × 0.10 × 5.0 = +0.45
+                    if current_win_rate >= 0.70:
+                        synergy = current_win_rate * self.total_pnl * self.synergy_scale
+                        reward += min(2.0, synergy)  # Cap synergy at +2.0
+            else:
+                # V5 CATASTROPHIC PENALTY for being too passive
+                # ==================================================
+                # This MUST be worse than ANY trading outcome to prevent no-trade collapse
+                #
+                # Math: 0 trades = -10.0 (base) - 5.0 (extra) - 30.0 (3 × 10.0) = -35.0
+                #       vs 3 worst trades = 3 × (+0.05) + 0.2 + 1.0 = +1.35
+                #
+                # The gap is MASSIVE (-35 vs +1.35) - model will learn to trade!
+
+                missing_trades = self.min_trades_required - self.n_trades
+                passive_penalty = missing_trades * self.missing_trade_penalty  # 10.0 per missing
+
+                # Extra penalty based on how few trades were made
                 if self.n_trades == 0:
-                    passive_penalty += 3.0  # Huge additional penalty for complete inaction
+                    passive_penalty += self.zero_trade_extra  # +5.0 extra for 0 trades
                 elif self.n_trades == 1:
-                    passive_penalty += 1.5  # Still bad for only 1 trade
+                    passive_penalty += self.zero_trade_extra * 0.4  # +2.0 for 1 trade
                 elif self.n_trades == 2:
-                    passive_penalty += 0.5  # Small penalty for 2 trades
+                    passive_penalty += self.zero_trade_extra * 0.2  # +1.0 for 2 trades
 
                 reward -= passive_penalty
 

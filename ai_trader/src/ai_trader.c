@@ -32,6 +32,7 @@
 #include "chart_fetcher.h"
 #include "model_loader.h"
 #include "logger_integration.h"
+#include "telegram_bot.h"
 
 /* Trading configuration */
 #define TRADER_POLL_INTERVAL_MS     1000    /* Poll charts every 1 second */
@@ -86,6 +87,11 @@ typedef struct {
     
     /* Logger integration */
     logger_integration_t logger;
+    
+    /* Telegram bot */
+    telegram_bot_t telegram;
+    pthread_t telegram_thread;
+    volatile bool telegram_running;
 } ai_trader_t;
 
 /* Global trader instance for signal handling */
@@ -99,6 +105,102 @@ static void signal_handler(int sig) {
     if (g_trader) {
         g_trader->running = false;
     }
+}
+
+/**
+ * @brief Handle Telegram commands
+ */
+static void telegram_command_handler(const char *command, const char *args, void *user_data) {
+    ai_trader_t *trader = (ai_trader_t *)user_data;
+    (void)args;
+    
+    if (!trader) return;
+    
+    if (strcmp(command, "/status") == 0) {
+        time_t uptime = time(NULL) - trader->start_time;
+        telegram_send_fmt(&trader->telegram,
+            "📊 *Status*\n"
+            "Mode: `%s`\n"
+            "Uptime: `%ld min`\n"
+            "Tokens: `%d active`\n"
+            "Predictions: `%d`",
+            trader->config.paper_trade ? "PAPER" : "LIVE",
+            uptime / 60,
+            trader->active_count,
+            trader->total_predictions);
+    }
+    else if (strcmp(command, "/pnl") == 0) {
+        if (trader->config.paper_trade) {
+            double balance, total_pnl, win_rate;
+            int total_trades, winning_trades;
+            paper_get_stats(&trader->paper_trader, &balance, &total_trades,
+                            &winning_trades, &total_pnl, &win_rate);
+            telegram_send_fmt(&trader->telegram,
+                "💰 *Profit/Loss*\n"
+                "Total PnL: `%.6f SOL`\n"
+                "Win Rate: `%.1f%%`\n"
+                "Wins: `%d` | Losses: `%d`\n"
+                "Trades: `%d`",
+                total_pnl,
+                win_rate * 100,
+                winning_trades,
+                total_trades - winning_trades,
+                total_trades);
+        } else {
+            telegram_send_message(&trader->telegram, "📊 *PnL*: Live mode - check wallet");
+        }
+    }
+    else if (strcmp(command, "/balance") == 0) {
+        if (trader->config.paper_trade) {
+            double balance, total_pnl, win_rate;
+            int total_trades, winning_trades;
+            paper_get_stats(&trader->paper_trader, &balance, &total_trades,
+                            &winning_trades, &total_pnl, &win_rate);
+            double initial = trader->paper_trader.initial_balance;
+            telegram_send_fmt(&trader->telegram,
+                "💵 *Balance*\n"
+                "Current: `%.6f SOL`\n"
+                "Initial: `%.6f SOL`\n"
+                "Change: `%+.2f%%`",
+                balance,
+                initial,
+                (initial > 0) ? ((balance - initial) / initial) * 100 : 0);
+        } else {
+            telegram_send_message(&trader->telegram, "💵 *Balance*: Check Solana wallet");
+        }
+    }
+    else if (strcmp(command, "/trades") == 0) {
+        telegram_send_fmt(&trader->telegram,
+            "📈 *Recent Activity*\n"
+            "Buys: `%d`\n"
+            "Sells: `%d`\n"
+            "Predictions: `%d`",
+            trader->total_buys,
+            trader->total_sells,
+            trader->total_predictions);
+    }
+    else if (strcmp(command, "/help") == 0) {
+        telegram_send_message(&trader->telegram,
+            "🤖 *AI Trader Commands*\n"
+            "/status - Bot status\n"
+            "/pnl - Profit/Loss\n"
+            "/balance - Wallet balance\n"
+            "/trades - Recent trades\n"
+            "/help - This message");
+    }
+}
+
+/**
+ * @brief Telegram polling thread
+ */
+static void *telegram_poll_thread(void *arg) {
+    ai_trader_t *trader = (ai_trader_t *)arg;
+    
+    while (trader->telegram_running) {
+        telegram_poll_updates(&trader->telegram);
+    }
+    
+    return NULL;
 }
 
 /**
@@ -519,6 +621,21 @@ int trader_init(ai_trader_t *trader, const char *config_path, const char *model_
     /* Initialize logger integration for auto-discovery */
     logger_integration_init(&trader->logger);
     
+    /* Initialize Telegram bot */
+    if (trader->config.telegram_bot_token[0] != '\0' &&
+        trader->config.telegram_chat_id[0] != '\0') {
+        if (telegram_init(&trader->telegram,
+                          trader->config.telegram_bot_token,
+                          trader->config.telegram_chat_id) == 0) {
+            telegram_set_command_callback(&trader->telegram, telegram_command_handler, trader);
+            log_info("Telegram bot initialized");
+        } else {
+            log_warn("Failed to initialize Telegram bot");
+        }
+    } else {
+        log_info("Telegram bot disabled (no token/chat_id configured)");
+    }
+    
     return 0;
 }
 
@@ -535,6 +652,17 @@ int trader_start(ai_trader_t *trader) {
     if (pthread_create(&trader->trading_thread, NULL, trading_loop, trader) != 0) {
         log_error("Failed to create trading thread");
         return -1;
+    }
+    
+    /* Start Telegram polling if configured */
+    if (trader->telegram.initialized) {
+        trader->telegram_running = true;
+        if (pthread_create(&trader->telegram_thread, NULL, telegram_poll_thread, trader) != 0) {
+            log_warn("Failed to start Telegram polling");
+        } else {
+            log_info("Telegram bot listening for commands");
+            telegram_send_message(&trader->telegram, "🤖 *AI Trader Started*\nSend /help for commands");
+        }
     }
     
     return 0;
@@ -562,6 +690,14 @@ void trader_cleanup(ai_trader_t *trader) {
     
     trader_stop(trader);
     trader_print_stats(trader);
+    
+    /* Stop and cleanup Telegram */
+    if (trader->telegram.initialized) {
+        trader->telegram_running = false;
+        telegram_send_message(&trader->telegram, "🛑 *AI Trader Stopped*");
+        pthread_join(trader->telegram_thread, NULL);
+        telegram_cleanup(&trader->telegram);
+    }
     
     /* Cleanup integrations */
     logger_integration_cleanup(&trader->logger);
