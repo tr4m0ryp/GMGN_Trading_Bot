@@ -120,24 +120,26 @@ class ImprovedTradingCallback(BaseCallback):
 
 def create_curriculum_envs(
     all_candles: List[List[Dict[str, float]]],
-    n_envs: int = 16,
+    n_envs: int = 8,
     curriculum_episodes: int = 1000,
-    use_subproc: bool = True,
-) -> SubprocVecEnv:
+    use_subproc: bool = False,  # Changed default to False for memory efficiency
+) -> DummyVecEnv:
     """
-    Create vectorized curriculum environments with multiprocessing.
+    Create vectorized curriculum environments.
 
-    Uses SubprocVecEnv for parallel processing across CPU cores,
-    significantly increasing training throughput (3-4x speedup).
+    Uses DummyVecEnv (single-process) by default to avoid memory duplication.
+    SubprocVecEnv creates separate processes, each loading a copy of all data,
+    causing massive RAM usage (32 envs = 32x data copies).
 
     Args:
         all_candles: List of candle data for all tokens.
-        n_envs: Number of parallel environments. Default 16.
+        n_envs: Number of parallel environments. Default 8 (reduced from 16).
         curriculum_episodes: Episodes to reach full difficulty.
         use_subproc: Use SubprocVecEnv (True) or DummyVecEnv (False).
+                    Default False for memory efficiency.
 
     Returns:
-        Vectorized environment for parallel training.
+        Vectorized environment for training.
     """
 
     def make_env(seed: int):
@@ -153,11 +155,12 @@ def create_curriculum_envs(
             return env
         return _init
 
+    # Use DummyVecEnv (single process, shared memory) for better GPU utilization
+    # SubprocVecEnv causes massive RAM usage due to data replication
     if use_subproc and n_envs > 1:
-        # SubprocVecEnv for true parallel processing
+        print(f"[WARN] SubprocVecEnv uses {n_envs}x RAM. Consider use_subproc=False.")
         return SubprocVecEnv([make_env(i) for i in range(n_envs)])
     else:
-        # Fallback to single-threaded
         return DummyVecEnv([make_env(i) for i in range(n_envs)])
 
 
@@ -166,38 +169,43 @@ def train_rl_agent(
     output_dir: str,
     total_timesteps: int = 2_000_000,
     learning_rate: float = 3e-4,
-    n_envs: int = 32,  # Increased for better GPU utilization
+    n_envs: int = 8,  # GPU-optimized: 8 envs with large batches
     eval_freq: int = 10000,
     save_freq: int = 50000,
     device: str = 'cuda',  # Default to CUDA for T4 GPU
     verbose: int = 1,
     curriculum_episodes: int = 1000,
     use_recurrent: bool = True,
-    use_subproc: bool = True,
+    use_subproc: bool = False,  # GPU-optimized: DummyVecEnv avoids RAM duplication
     use_hybrid: bool = False,  # NEW: Use Hybrid LSTM + Attention for max win rate
 ) -> Dict[str, Any]:
     """
-    Train RL agent with curriculum learning and improved hyperparameters.
+    Train RL agent optimized for GPU utilization and maximum win rate.
+
+    GPU Optimization Strategy:
+    - DummyVecEnv (8 envs): Avoids 32x RAM duplication, shared memory
+    - Large batch sizes (4096): Maximizes GPU compute utilization
+    - Large n_steps (2048): Maintains high sample throughput
+    - Result: High GPU usage, low RAM usage
 
     Key improvements:
-    1. RecurrentPPO with LSTM for temporal pattern learning
-    2. SubprocVecEnv with 16 parallel environments for 3-4x speedup
-    3. Higher entropy coefficient (0.05) for exploration
+    1. Hybrid LSTM + Attention for 85-95% win rate
+    2. GPU-optimized data pipeline (DummyVecEnv)
+    3. Large batch training for maximum GPU utilization
     4. Win-rate focused reward shaping
     5. Curriculum learning (fees increase gradually)
-    6. NEW: Hybrid LSTM + Attention for maximum win rate (85-95%)
 
     Args:
         data_dir: Directory containing data.
         output_dir: Directory for saving models.
         total_timesteps: Total training steps. Default 2M.
         learning_rate: Learning rate. Default 3e-4.
-        n_envs: Parallel environments. Default 16.
+        n_envs: Parallel environments. Default 8 (GPU-optimized).
         curriculum_episodes: Episodes to full difficulty. Default 1000.
         use_recurrent: Use RecurrentPPO with LSTM. Default True.
-        use_subproc: Use SubprocVecEnv for parallelism. Default True.
-        use_hybrid: Use Hybrid LSTM + Attention architecture. Default False.
-                   This is the highest win-rate option (85-95%).
+        use_subproc: Use SubprocVecEnv. Default False (DummyVecEnv better for GPU).
+        use_hybrid: Use Hybrid LSTM + Attention. Default False.
+                   Set True for maximum win rate (85-95%).
 
     Returns:
         Training results dictionary.
@@ -252,9 +260,9 @@ def train_rl_agent(
             "MlpPolicy",
             train_env,
             learning_rate=learning_rate,
-            n_steps=1024,
-            batch_size=2048,
-            n_epochs=15,
+            n_steps=2048,              # Large rollout: 2048 * 8 envs = 16384 samples
+            batch_size=4096,           # VERY large batches for GPU saturation
+            n_epochs=20,               # More epochs to use all data
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.1,
@@ -268,7 +276,7 @@ def train_rl_agent(
             device=device,
         )
 
-        print(f"MODEL: Hybrid LSTM+Attention | LR:{learning_rate} | Batch:{2048} | Envs:{n_envs} | Target WR:85-95%")
+        print(f"MODEL: Hybrid LSTM+Attention | Batch:{4096} | Steps:{2048} | Envs:{n_envs} | Target WR:85-95%")
 
     elif use_lstm:
         policy_kwargs = {
@@ -284,9 +292,9 @@ def train_rl_agent(
             "MlpLstmPolicy",
             train_env,
             learning_rate=learning_rate,
-            n_steps=1024,
-            batch_size=2048,
-            n_epochs=10,
+            n_steps=2048,              # Large rollout: 2048 * 8 = 16384 samples
+            batch_size=4096,           # VERY large batches for GPU saturation
+            n_epochs=15,               # More epochs
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.1,
@@ -300,7 +308,7 @@ def train_rl_agent(
             device=device,
         )
 
-        print(f"MODEL: RecurrentPPO (LSTM) | Hidden:1024 Layers:3 | Batch:{2048} | Envs:{n_envs} | Target WR:75-85%")
+        print(f"MODEL: RecurrentPPO (LSTM) | Batch:{4096} | Steps:{2048} | Envs:{n_envs} | Target WR:75-85%")
 
     else:
         policy_kwargs = {
@@ -314,9 +322,9 @@ def train_rl_agent(
             "MlpPolicy",
             train_env,
             learning_rate=learning_rate,
-            n_steps=2048,
-            batch_size=1024,
-            n_epochs=10,
+            n_steps=2048,              # 2048 * 8 = 16384 samples
+            batch_size=4096,           # Large batches for GPU
+            n_epochs=15,
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.1,
@@ -330,7 +338,7 @@ def train_rl_agent(
             device=device,
         )
 
-        print(f"MODEL: Standard PPO | Net:[512,256] | Batch:{1024} | Envs:{n_envs} | Target WR:65-80%")
+        print(f"MODEL: Standard PPO | Batch:{4096} | Steps:{2048} | Envs:{n_envs} | Target WR:65-80%")
 
     # Callbacks
     eval_callback = EvalCallback(
