@@ -39,7 +39,7 @@ from stable_baselines3.common.callbacks import (
 )
 from stable_baselines3.common.monitor import Monitor
 
-from .environment import TradingEnvironmentV2, CurriculumTradingEnvironment
+from .environment import TradingEnvironmentV2, CurriculumTradingEnvironment, MultiTokenEvalEnvironment
 from .agent import (
     TradingFeaturesExtractor,
     AdvancedTradingFeaturesExtractor,
@@ -171,7 +171,7 @@ def train_rl_agent(
     learning_rate: float = 3e-4,
     n_envs: int = 8,  # GPU-optimized: 8 envs with large batches
     eval_freq: int = 10000,
-    save_freq: int = 50000,
+    save_freq: int = 300000,  # Reduced checkpoint frequency to save disk space
     device: str = 'cuda',  # Default to CUDA for T4 GPU
     verbose: int = 1,
     curriculum_episodes: int = 1000,
@@ -235,7 +235,9 @@ def train_rl_agent(
         curriculum_episodes=curriculum_episodes,
         use_subproc=use_subproc,
     )
-    eval_env = TradingEnvironmentV2(eval_candles[0], fee_multiplier=1.0)
+    # Use MultiTokenEvalEnvironment to evaluate across ALL eval tokens (not just one)
+    # This ensures proper generalization testing and meaningful variance in metrics
+    eval_env = MultiTokenEvalEnvironment(eval_candles)
     eval_env = Monitor(eval_env)
 
     # Determine algorithm: Hybrid LSTM+Attention, RecurrentPPO (LSTM), or standard PPO
