@@ -242,41 +242,44 @@ def train_rl_agent(
     use_lstm = use_recurrent and RECURRENT_AVAILABLE
 
     if use_hybrid:
-        # HIGHEST WIN RATE: Hybrid LSTM + Multi-Head Attention with PPO
+        # MASSIVE MODEL: Fully utilize 14GB T4 GPU for maximum win rate
         policy_kwargs = {
             "features_extractor_class": HybridLSTMAttentionExtractor,
             "features_extractor_kwargs": {
-                "features_dim": 512,
-                "lstm_hidden": 256,
-                "lstm_layers": 2,
-                "n_heads": 8,
-                "dropout": 0.1,
+                "features_dim": 2048,      # MASSIVE: 512 -> 2048 (4x larger)
+                "lstm_hidden": 1024,       # MASSIVE: 256 -> 1024 (4x larger)
+                "lstm_layers": 3,          # Deeper: 2 -> 3 layers
+                "n_heads": 16,             # More attention: 8 -> 16 heads
+                "dropout": 0.2,            # Higher dropout for regularization
             },
-            "net_arch": dict(pi=[512, 256, 128], vf=[512, 256, 128]),
+            "net_arch": dict(
+                pi=[2048, 1024, 512, 256],  # MASSIVE policy: 4 layers
+                vf=[2048, 1024, 512, 256]   # MASSIVE value: 4 layers
+            ),
             "activation_fn": torch.nn.GELU,
         }
 
         model = PPO(
             "MlpPolicy",
             train_env,
-            learning_rate=learning_rate,
-            n_steps=2048,              # Large rollout: 2048 * 8 envs = 16384 samples
-            batch_size=4096,           # VERY large batches for GPU saturation
-            n_epochs=20,               # More epochs to use all data
-            gamma=0.99,
-            gae_lambda=0.95,
-            clip_range=0.1,
-            clip_range_vf=0.1,
-            ent_coef=0.03,
+            learning_rate=learning_rate * 0.5,  # Lower LR for stability with large model
+            n_steps=4096,              # DOUBLED: 4096 * 8 = 32768 samples/rollout
+            batch_size=8192,           # DOUBLED: 8192 for maximum GPU saturation
+            n_epochs=10,               # Reduced epochs (large batches need fewer passes)
+            gamma=0.995,               # Higher gamma for long-term thinking
+            gae_lambda=0.98,           # Higher GAE for better advantage estimation
+            clip_range=0.15,           # Slightly larger clip range
+            clip_range_vf=0.15,
+            ent_coef=0.01,             # Lower entropy (more exploitation)
             vf_coef=0.5,
             max_grad_norm=0.5,
             policy_kwargs=policy_kwargs,
-            verbose=0,  # Suppress SB3 verbose output
+            verbose=0,
             tensorboard_log=str(log_dir),
             device=device,
         )
 
-        print(f"MODEL: Hybrid LSTM+Attention | Batch:{4096} | Steps:{2048} | Envs:{n_envs} | Target WR:85-95%")
+        print(f"MODEL: MASSIVE Hybrid (14GB GPU) | Features:2048 LSTM:1024x3 Heads:16 | Batch:8192 | Target WR:85-95%")
 
     elif use_lstm:
         policy_kwargs = {
