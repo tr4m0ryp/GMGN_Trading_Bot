@@ -72,10 +72,17 @@ def load_raw_data(csv_path: str) -> pd.DataFrame:
     if df.empty:
         raise ValueError("CSV file is empty")
 
-    required_columns = ['token_address', 'candles']
+    required_columns = ['token_address']
     for col in required_columns:
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}")
+
+    # Rename chart_data_json to candles if it exists (for backward compatibility)
+    if 'chart_data_json' in df.columns and 'candles' not in df.columns:
+        df = df.rename(columns={'chart_data_json': 'candles'})
+
+    if 'candles' not in df.columns:
+        raise ValueError("Missing required column: candles or chart_data_json")
 
     return df
 
