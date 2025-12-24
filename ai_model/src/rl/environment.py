@@ -35,36 +35,41 @@ from data.preparation import extract_features, get_execution_price
 
 class TradingEnvironmentV2(gym.Env):
     """
-    Trading environment V5: Profit-maximizing reward system with win rate bonuses.
+    Trading environment V5.1: Enhanced profit-maximizing reward system.
 
-    V5 REWARD SYSTEM - Key Design Principles:
-    ==========================================
+    V5.1 REWARD SYSTEM - Key Design Principles:
+    ============================================
     1. **Trading is ALWAYS positive**: Base reward (+0.3) ensures every trade is rewarded
     2. **Losses are capped**: Minimum per-trade reward is +0.05 (0.3 - 0.25 cap)
-    3. **Profits scale significantly**: +3% profit = +2.0 total reward
+    3. **Profits scale significantly**: +3% profit = +2.0, +10% = +4.8 total reward
     4. **Win rate bonuses**: Up to +3.0 bonus for 95%+ win rate
     5. **Catastrophic no-trade penalty**: 0 trades = -35.0 minimum
+    6. **Synergy bonus**: High WR + High Profit = Extra reward (up to +2.0)
+    7. **Quick trade bonus**: Fast profitable exits get +0.3 bonus
 
     MATHEMATICAL GUARANTEE:
     =======================
     - 0 trades:       -10.0 (base) - 5.0 (extra) - 30.0 (3 missing × 10.0) = -35.0
     - 3 worst trades: 3 × (+0.05) + 0.2 (50% WR) + 1.0 (sweet spot) = +1.35
-    - 3 good trades:  3 × (+2.0) + 3.0 (95% WR) + 1.0 (sweet spot) = +10.0
+    - 3 good trades:  3 × (+2.0) + 3.0 (95% WR) + 1.0 + 2.0 (synergy) = +12.0
 
-    Per-Trade Reward Formula:
-    ========================
+    Per-Trade Reward Formula (V5.1):
+    ================================
     if profit > 0:
-        reward = 0.3 + (return × 30) + (0.5 + min(0.5, return × 10))
+        reward = 0.3 + (return × 30) + (0.5 + min(1.5, return × 10)) + quick_bonus
         Example: +3% return = 0.3 + 0.9 + 0.8 = +2.0
+        Example: +10% return = 0.3 + 3.0 + 1.5 = +4.8 (vs V5: +2.3)
     if loss:
-        reward = 0.3 + max(-0.25, return × 15)
-        Example: -3% loss = 0.3 + max(-0.25, -0.45) = 0.3 - 0.25 = +0.05
+        reward = 0.3 + max(-0.25, return × loss_scale)
+        Example: -3% loss = 0.3 + max(-0.25, -0.45) = +0.05
 
-    End-of-Episode Bonuses:
-    ======================
+    End-of-Episode Bonuses (V5.1):
+    ==============================
     - Sweet spot (3-5 trades): +1.0
     - Win rate 95%+: +3.0, 90%+: +2.5, 85%+: +2.0, etc.
     - Total profit bonus: up to +2.0
+    - Synergy bonus (WR × Profit): up to +2.0 (NEW in V5.1)
+    - Over-trading (>8): -0.2 - 0.3 per excess trade (stronger in V5.1)
 
     Args:
         candles: List of candle dictionaries with OHLCV data.
@@ -78,11 +83,17 @@ class TradingEnvironmentV2(gym.Env):
         profit_scale: Scale factor for profit component. Default 30.0.
         win_bonus_base: Base win bonus. Default 0.5.
         win_bonus_scale: Scale for additional win bonus. Default 10.0.
+        win_bonus_cap: Cap for win bonus (higher rewards big wins). Default 1.5.
+        loss_scale: Scale factor for loss penalty. Default 15.0.
         loss_cap: Maximum loss penalty (negative value). Default -0.25.
         sweet_spot_bonus: Bonus for 3-5 trades. Default 1.0.
         missing_trade_penalty: Penalty per missing trade. Default 10.0.
         zero_trade_extra: Extra penalty for 0 trades. Default 5.0.
         momentum_reward_scale: Scale for momentum tracking. Default 0.002.
+        synergy_scale: Scale for WR + Profit synergy bonus. Default 5.0.
+        quick_trade_threshold: Max steps for quick trade bonus. Default 30.
+        quick_trade_bonus: Max bonus for quick profitable trades. Default 0.3.
+        overtrade_penalty_scale: Penalty per excess trade beyond 8. Default 0.3.
     """
 
     metadata = {"render_modes": ["human"]}
