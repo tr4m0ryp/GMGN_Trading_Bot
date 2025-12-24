@@ -30,13 +30,14 @@
  */
 typedef struct {
     char token[128];                    /* Bot API token */
-    char chat_id[64];                   /* Chat ID for notifications */
+    char chat_id[64];                   /* Default chat ID for broadcasts */
+    char last_chat_id[64];              /* Last sender's chat ID for replies */
     int64_t last_update_id;             /* Last processed update ID */
     bool initialized;                   /* Bot initialized */
     bool polling;                       /* Currently polling for commands */
     
-    /* Callback for commands */
-    void (*command_callback)(const char *command, const char *args, void *user_data);
+    /* Callback for commands - receives chat_id for replies */
+    void (*command_callback)(const char *chat_id, const char *command, const char *args, void *user_data);
     void *callback_user_data;
 } telegram_bot_t;
 
@@ -110,8 +111,25 @@ int telegram_notify_trade(telegram_bot_t *bot, const char *action,
  * @param user_data Context to pass to callback
  */
 void telegram_set_command_callback(telegram_bot_t *bot,
-                                   void (*callback)(const char *, const char *, void *),
+                                   void (*callback)(const char *, const char *, const char *, void *),
                                    void *user_data);
+
+/**
+ * @brief Reply to last sender
+ *
+ * Sends message to the chat that sent the last command.
+ *
+ * @param bot Bot instance
+ * @param message Message text
+ *
+ * @return 0 on success, -1 on error
+ */
+int telegram_reply(telegram_bot_t *bot, const char *message);
+
+/**
+ * @brief Reply with formatted message
+ */
+int telegram_reply_fmt(telegram_bot_t *bot, const char *fmt, ...);
 
 /**
  * @brief Poll for updates (commands)

@@ -89,17 +89,57 @@ static int api_request(telegram_bot_t *bot, const char *method,
 }
 
 int telegram_init(telegram_bot_t *bot, const char *token, const char *chat_id) {
-    if (!bot || !token || !chat_id) {
+    if (!bot || !token) {
         return -1;
     }
 
     memset(bot, 0, sizeof(telegram_bot_t));
     strncpy(bot->token, token, sizeof(bot->token) - 1);
-    strncpy(bot->chat_id, chat_id, sizeof(bot->chat_id) - 1);
+    
+    /* chat_id is optional - if not provided, will use sender's chat_id */
+    if (chat_id && chat_id[0] != '\0') {
+        strncpy(bot->chat_id, chat_id, sizeof(bot->chat_id) - 1);
+    }
+    
     bot->last_update_id = 0;
     bot->initialized = true;
 
     return 0;
+}
+
+/**
+ * @brief Send message to a specific chat
+ */
+static int telegram_send_to_chat(telegram_bot_t *bot, const char *chat_id, const char *message) {
+    char params[TELEGRAM_MAX_MSG_LEN + 256];
+    curl_buffer_t response = {0};
+    cJSON *root;
+    char *json_str;
+    int ret;
+
+    if (!bot || !bot->initialized || !message || !chat_id || chat_id[0] == '\0') {
+        return -1;
+    }
+
+    /* Build JSON request */
+    root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "chat_id", chat_id);
+    cJSON_AddStringToObject(root, "text", message);
+    cJSON_AddStringToObject(root, "parse_mode", "Markdown");
+
+    json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+
+    if (!json_str) return -1;
+
+    snprintf(params, sizeof(params), "%s", json_str);
+    free(json_str);
+
+    /* Make request */
+    ret = api_request(bot, "sendMessage", params, &response);
+    free(response.data);
+
+    return ret;
 }
 
 int telegram_send_message(telegram_bot_t *bot, const char *message) {
@@ -168,11 +208,29 @@ int telegram_notify_trade(telegram_bot_t *bot, const char *action,
 }
 
 void telegram_set_command_callback(telegram_bot_t *bot,
-                                   void (*callback)(const char *, const char *, void *),
+                                   void (*callback)(const char *, const char *, const char *, void *),
                                    void *user_data) {
     if (!bot) return;
     bot->command_callback = callback;
     bot->callback_user_data = user_data;
+}
+
+int telegram_reply(telegram_bot_t *bot, const char *message) {
+    if (!bot || !bot->initialized || bot->last_chat_id[0] == '\0') {
+        return -1;
+    }
+    return telegram_send_to_chat(bot, bot->last_chat_id, message);
+}
+
+int telegram_reply_fmt(telegram_bot_t *bot, const char *fmt, ...) {
+    char message[TELEGRAM_MAX_MSG_LEN];
+    va_list args;
+
+    va_start(args, fmt);
+    vsnprintf(message, sizeof(message), fmt, args);
+    va_end(args);
+
+    return telegram_reply(bot, message);
 }
 
 int telegram_poll_updates(telegram_bot_t *bot) {
@@ -217,7 +275,21 @@ int telegram_poll_updates(telegram_bot_t *bot) {
         }
 
         if (message && bot->command_callback) {
+            cJSON *chat = cJSON_GetObjectItemCaseSensitive(message, "chat");
             cJSON *text = cJSON_GetObjectItemCaseSensitive(message, "text");
+            
+            /* Extract sender's chat_id */
+            char sender_chat_id[64] = {0};
+            if (chat) {
+                cJSON *chat_id_json = cJSON_GetObjectItemCaseSensitive(chat, "id");
+                if (chat_id_json && cJSON_IsNumber(chat_id_json)) {
+                    snprintf(sender_chat_id, sizeof(sender_chat_id), "%lld", 
+                             (long long)chat_id_json->valuedouble);
+                    /* Store for telegram_reply() */
+                    strncpy(bot->last_chat_id, sender_chat_id, sizeof(bot->last_chat_id) - 1);
+                }
+            }
+            
             if (text && cJSON_IsString(text)) {
                 const char *msg_text = text->valuestring;
                 
@@ -237,7 +309,7 @@ int telegram_poll_updates(telegram_bot_t *bot) {
                         strncpy(cmd, msg_text, sizeof(cmd) - 1);
                     }
                     
-                    bot->command_callback(cmd, args, bot->callback_user_data);
+                    bot->command_callback(sender_chat_id, cmd, args, bot->callback_user_data);
                 }
             }
         }

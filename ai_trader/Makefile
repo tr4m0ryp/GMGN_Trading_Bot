@@ -15,20 +15,25 @@ SRC_DIR = src
 BUILD_DIR = build
 INCLUDE_DIR = include
 
-# Source files (ai_trader.c has main, others are libraries)
-SRCS = $(SRC_DIR)/config_loader.c \
-       $(SRC_DIR)/trade_logger.c \
-       $(SRC_DIR)/paper_trader.c \
-       $(SRC_DIR)/chart_fetcher.c \
-       $(SRC_DIR)/model_loader.c \
-       $(SRC_DIR)/jito_client.c \
-       $(SRC_DIR)/logger_integration.c \
-       $(SRC_DIR)/base58.c \
-       $(SRC_DIR)/solana_wallet.c \
-       $(SRC_DIR)/telegram_bot.c \
-       $(SRC_DIR)/ai_trader.c
+# Source files organized by category
+CORE_SRCS = $(SRC_DIR)/core/config_loader.c \
+            $(SRC_DIR)/core/trade_logger.c \
+            $(SRC_DIR)/core/paper_trader.c \
+            $(SRC_DIR)/core/model_loader.c \
+            $(SRC_DIR)/core/ai_trader.c
 
-OBJS = $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
+INTEGRATION_SRCS = $(SRC_DIR)/integrations/chart_fetcher.c \
+                   $(SRC_DIR)/integrations/jito_client.c \
+                   $(SRC_DIR)/integrations/logger_integration.c \
+                   $(SRC_DIR)/integrations/telegram_bot.c
+
+CRYPTO_SRCS = $(SRC_DIR)/crypto/base58.c \
+              $(SRC_DIR)/crypto/solana_wallet.c
+
+SRCS = $(CORE_SRCS) $(INTEGRATION_SRCS) $(CRYPTO_SRCS)
+
+# Object files (flatten to build dir)
+OBJS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(SRCS))
 DEPS = $(OBJS:.o=.d)
 
 # Main targets
@@ -46,8 +51,16 @@ $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Object files
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
-	@mkdir -p $(BUILD_DIR)
+$(BUILD_DIR)/core/%.o: $(SRC_DIR)/core/%.c
+	@mkdir -p $(BUILD_DIR)/core
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD_DIR)/integrations/%.o: $(SRC_DIR)/integrations/%.c
+	@mkdir -p $(BUILD_DIR)/integrations
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD_DIR)/crypto/%.o: $(SRC_DIR)/crypto/%.c
+	@mkdir -p $(BUILD_DIR)/crypto
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 # Test targets

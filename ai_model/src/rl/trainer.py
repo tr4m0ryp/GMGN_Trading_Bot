@@ -120,23 +120,28 @@ class ImprovedTradingCallback(BaseCallback):
 
 def create_curriculum_envs(
     all_candles: List[List[Dict[str, float]]],
-    n_envs: int = 8,
-    curriculum_episodes: int = 1000,
-    use_subproc: bool = False,  # Changed default to False for memory efficiency
+    n_envs: int = 64,
+    curriculum_episodes: int = 2000,
+    use_subproc: bool = True,  # CPU-optimized: use SubprocVecEnv for better parallelization
 ) -> DummyVecEnv:
     """
     Create vectorized curriculum environments.
 
-    Uses DummyVecEnv (single-process) by default to avoid memory duplication.
-    SubprocVecEnv creates separate processes, each loading a copy of all data,
-    causing massive RAM usage (32 envs = 32x data copies).
+    CPU Optimization (50GB RAM):
+    - SubprocVecEnv (64 envs): Each process loads data once, 64x parallel throughput
+    - With 50GB RAM, we can safely support 64 parallel environments
+    - Data replication is negligible with 64 cores processing simultaneously
+
+    GPU (14GB constraint):
+    - Would use DummyVecEnv (8 envs) to avoid memory duplication
+    - But CPU has no such constraint with 50GB available
 
     Args:
         all_candles: List of candle data for all tokens.
-        n_envs: Number of parallel environments. Default 8 (reduced from 16).
-        curriculum_episodes: Episodes to reach full difficulty.
+        n_envs: Number of parallel environments. Default 64 (CPU-optimized).
+        curriculum_episodes: Episodes to reach full difficulty. Default 2000.
         use_subproc: Use SubprocVecEnv (True) or DummyVecEnv (False).
-                    Default False for memory efficiency.
+                    Default True for CPU with 50GB RAM.
 
     Returns:
         Vectorized environment for training.
@@ -155,57 +160,64 @@ def create_curriculum_envs(
             return env
         return _init
 
-    # Use DummyVecEnv (single process, shared memory) for better GPU utilization
-    # SubprocVecEnv causes massive RAM usage due to data replication
+    # CPU-optimized: Use SubprocVecEnv with 64 parallel processes
+    # Each process gets its own environment, 50GB RAM supports this easily
+    # Data replication is worth the parallelization benefit
     if use_subproc and n_envs > 1:
-        print(f"[WARN] SubprocVecEnv uses {n_envs}x RAM. Consider use_subproc=False.")
         return SubprocVecEnv([make_env(i) for i in range(n_envs)])
     else:
+        print(f"[WARN] DummyVecEnv with {n_envs} envs limits CPU parallelization. Consider use_subproc=True.")
         return DummyVecEnv([make_env(i) for i in range(n_envs)])
 
 
 def train_rl_agent(
     data_dir: str,
     output_dir: str,
-    total_timesteps: int = 2_000_000,
-    learning_rate: float = 3e-4,
-    n_envs: int = 8,  # GPU-optimized: 8 envs with large batches
+    total_timesteps: int = 10_000_000,  # CPU-optimized: 10M steps (can train much longer)
+    learning_rate: float = 5e-4,  # CPU-optimized: higher LR for CPU batch normalization
+    n_envs: int = 64,  # CPU-optimized: 64 parallel environments with SubprocVecEnv
     eval_freq: int = 10000,
     save_freq: int = 300000,  # Reduced checkpoint frequency to save disk space
-    device: str = 'cuda',  # Default to CUDA for T4 GPU
+    device: str = 'cpu',  # CPU-optimized: much faster for MLP policies than GPU
     verbose: int = 1,
-    curriculum_episodes: int = 1000,
-    use_recurrent: bool = True,
-    use_subproc: bool = False,  # GPU-optimized: DummyVecEnv avoids RAM duplication
-    use_hybrid: bool = False,  # NEW: Use Hybrid LSTM + Attention for max win rate
+    curriculum_episodes: int = 2000,  # More phases with more environments
+    use_recurrent: bool = True,  # LSTM for temporal modeling (good on CPU)
+    use_subproc: bool = True,  # CPU-optimized: SubprocVecEnv for 64 envs (safe with 50GB RAM)
+    use_hybrid: bool = False,  # CPU doesn't need massive models
 ) -> Dict[str, Any]:
     """
-    Train RL agent optimized for GPU utilization and maximum win rate.
+    Train RL agent optimized for CPU with 50GB RAM.
 
-    GPU Optimization Strategy:
-    - DummyVecEnv (8 envs): Avoids 32x RAM duplication, shared memory
-    - Large batch sizes (4096): Maximizes GPU compute utilization
-    - Large n_steps (2048): Maintains high sample throughput
-    - Result: High GPU usage, low RAM usage
+    CPU Optimization Strategy (50GB RAM):
+    - SubprocVecEnv (64 envs): 64x parallel throughput, each process independent
+    - Large batch sizes (4096): Leverages CPU cache efficiency
+    - Large n_steps (2048): 131K samples per rollout (64 * 2048)
+    - Result: High CPU utilization, excellent sample efficiency
 
-    Key improvements:
-    1. Hybrid LSTM + Attention for 85-95% win rate
-    2. GPU-optimized data pipeline (DummyVecEnv)
-    3. Large batch training for maximum GPU utilization
+    Why CPU is Better than GPU for MLP:
+    1. PPO with MLP policy is CPU-bound (not compute-bound)
+    2. SubprocVecEnv: 64 environments running in parallel
+    3. Each CPU core runs an environment independently
+    4. GPU would bottleneck waiting for data (GPU not saturated with MLP)
+    5. Torch CPU has excellent native vectorization support
+
+    Key features:
+    1. RecurrentPPO with LSTM for temporal pattern recognition
+    2. CPU-optimized parallel data pipeline (SubprocVecEnv 64 envs)
+    3. Higher learning rate for CPU batch processing
     4. Win-rate focused reward shaping
     5. Curriculum learning (fees increase gradually)
 
     Args:
         data_dir: Directory containing data.
         output_dir: Directory for saving models.
-        total_timesteps: Total training steps. Default 2M.
-        learning_rate: Learning rate. Default 3e-4.
-        n_envs: Parallel environments. Default 8 (GPU-optimized).
-        curriculum_episodes: Episodes to full difficulty. Default 1000.
+        total_timesteps: Total training steps. Default 10M.
+        learning_rate: Learning rate. Default 5e-4 (higher for CPU).
+        n_envs: Parallel environments. Default 64 (CPU-optimized with SubprocVecEnv).
+        curriculum_episodes: Episodes to full difficulty. Default 2000.
         use_recurrent: Use RecurrentPPO with LSTM. Default True.
-        use_subproc: Use SubprocVecEnv. Default False (DummyVecEnv better for GPU).
-        use_hybrid: Use Hybrid LSTM + Attention. Default False.
-                   Set True for maximum win rate (85-95%).
+        use_subproc: Use SubprocVecEnv. Default True (CPU-safe with 50GB).
+        use_hybrid: Use Hybrid LSTM + Attention. Default False (CPU doesn't need).
 
     Returns:
         Training results dictionary.
@@ -284,52 +296,54 @@ def train_rl_agent(
         print(f"MODEL: MASSIVE Hybrid (14GB GPU) | Features:2048 LSTM:1024x3 Heads:16 | Batch:8192 | Target WR:85-95%")
 
     elif use_lstm:
+        # CPU-optimized RecurrentPPO with LSTM
         policy_kwargs = {
-            "lstm_hidden_size": 1024,
-            "n_lstm_layers": 3,
+            "lstm_hidden_size": 512,   # CPU-friendly: reduced from 1024
+            "n_lstm_layers": 2,        # CPU-friendly: reduced from 3
             "shared_lstm": False,
             "enable_critic_lstm": True,
-            "net_arch": dict(pi=[1024, 512, 256], vf=[1024, 512, 256]),
-            "activation_fn": torch.nn.GELU,
+            "net_arch": dict(pi=[512, 256], vf=[512, 256]),  # CPU-friendly sizing
+            "activation_fn": torch.nn.ReLU,  # ReLU faster on CPU than GELU
         }
 
         model = RecurrentPPO(
             "MlpLstmPolicy",
             train_env,
-            learning_rate=learning_rate,
-            n_steps=2048,              # Large rollout: 2048 * 8 = 16384 samples
-            batch_size=4096,           # VERY large batches for GPU saturation
-            n_epochs=15,               # More epochs
+            learning_rate=learning_rate,  # 5e-4 for CPU
+            n_steps=2048,              # CPU-optimized: 2048 * 64 = 131,072 samples/rollout
+            batch_size=4096,           # Large batches for CPU cache efficiency
+            n_epochs=10,               # Fewer epochs (more data per step)
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.1,
             clip_range_vf=0.1,
-            ent_coef=0.05,
+            ent_coef=0.05,             # Maintain exploration
             vf_coef=0.5,
             max_grad_norm=0.5,
             policy_kwargs=policy_kwargs,
             verbose=0,  # Suppress SB3 verbose output
             tensorboard_log=str(log_dir),
-            device=device,
+            device=device,  # 'cpu' from function parameter
         )
 
-        print(f"MODEL: RecurrentPPO (LSTM) | Batch:{4096} | Steps:{2048} | Envs:{n_envs} | Target WR:75-85%")
+        print(f"MODEL: RecurrentPPO (LSTM) | CPU-Optimized | Batch:{4096} | Steps:{2048} | Envs:{n_envs} | LR:{learning_rate}")
 
     else:
+        # CPU-optimized Standard PPO
         policy_kwargs = {
             "features_extractor_class": AdvancedTradingFeaturesExtractor,
             "features_extractor_kwargs": {"features_dim": 512},
             "net_arch": dict(pi=[512, 256], vf=[512, 256]),
-            "activation_fn": torch.nn.GELU,
+            "activation_fn": torch.nn.ReLU,  # ReLU faster on CPU
         }
 
         model = PPO(
             "MlpPolicy",
             train_env,
-            learning_rate=learning_rate,
-            n_steps=2048,              # 2048 * 8 = 16384 samples
-            batch_size=4096,           # Large batches for GPU
-            n_epochs=15,
+            learning_rate=learning_rate,  # 5e-4 for CPU
+            n_steps=2048,              # CPU-optimized: 2048 * 64 = 131,072 samples/rollout
+            batch_size=4096,           # Large batches for CPU cache efficiency
+            n_epochs=10,               # Fewer epochs with more data per step
             gamma=0.99,
             gae_lambda=0.95,
             clip_range=0.1,
@@ -340,10 +354,10 @@ def train_rl_agent(
             policy_kwargs=policy_kwargs,
             verbose=0,  # Suppress SB3 verbose output
             tensorboard_log=str(log_dir),
-            device=device,
+            device=device,  # 'cpu' from function parameter
         )
 
-        print(f"MODEL: Standard PPO | Batch:{4096} | Steps:{2048} | Envs:{n_envs} | Target WR:65-80%")
+        print(f"MODEL: Standard PPO | CPU-Optimized | Batch:{4096} | Steps:{2048} | Envs:{n_envs} | LR:{learning_rate}")
 
     # Callbacks
     eval_callback = EvalCallback(
