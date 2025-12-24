@@ -15,6 +15,7 @@
 /* Disable truncation warnings */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
+#pragma GCC diagnostic ignored "-Wstringop-truncation"
 
 #include <stdio.h>
 #include <stdlib.h>

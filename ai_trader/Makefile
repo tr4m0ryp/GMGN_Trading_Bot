@@ -28,7 +28,8 @@ INTEGRATION_SRCS = $(SRC_DIR)/integrations/chart_fetcher.c \
                    $(SRC_DIR)/integrations/telegram_bot.c
 
 CRYPTO_SRCS = $(SRC_DIR)/crypto/base58.c \
-              $(SRC_DIR)/crypto/solana_wallet.c
+              $(SRC_DIR)/crypto/solana_wallet.c \
+              $(SRC_DIR)/crypto/solana_tx.c
 
 SRCS = $(CORE_SRCS) $(INTEGRATION_SRCS) $(CRYPTO_SRCS)
 
