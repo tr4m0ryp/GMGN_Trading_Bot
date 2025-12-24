@@ -30,11 +30,11 @@ class TradingEnvironmentV2(gym.Env):
     Trading environment optimized for profit maximization with target 3-5 trades per coin.
 
     Key improvements:
-    1. **Profit-scaled rewards**: Rewards scale with actual profit magnitude
-    2. **Trade frequency targeting**: Optimal reward for 3-5 trades per coin
-    3. **Hindsight rewards**: Penalizes missing profitable opportunities
-    4. **Win rate bonuses**: Additional rewards for high win rates (70-90%+)
-    5. **Curriculum learning**: Fee multiplier starts at 0, increases over time
+    1. **Trade encouragement**: Base bonus for each trade prevents no-trade collapse
+    2. **Profit-scaled rewards**: Rewards scale with actual profit magnitude
+    3. **Trade frequency targeting**: Optimal reward for 3-5 trades per coin
+    4. **Severe passive penalty**: Not trading is heavily penalized
+    5. **Win rate bonuses**: Additional rewards for high win rates (50-90%+)
 
     The goal is to maximize profit with 3-5 high-quality trades per coin.
 
@@ -42,12 +42,14 @@ class TradingEnvironmentV2(gym.Env):
         candles: List of candle dictionaries.
         max_steps: Maximum steps per episode.
         fee_multiplier: Fee scaling (0=no fees, 1=full fees). Use for curriculum.
-        opportunity_penalty: Penalty for missing profitable moves. Default 0.005.
+        opportunity_penalty: Penalty for missing profitable moves. Default 0.008.
         min_trades_required: Minimum trades target (sweet spot is 3-5). Default 3.
         max_trades_target: Maximum trades before diminishing returns. Default 5.
-        trade_frequency_bonus: Bonus for hitting 3-5 trade sweet spot. Default 0.3.
-        win_bonus_multiplier: Extra multiplier for winning trades. Default 2.0.
-        profit_scale: Scale factor for profit-based rewards. Default 50.0.
+        trade_frequency_bonus: Bonus for hitting 3-5 trade sweet spot. Default 0.5.
+        trade_attempt_bonus: Base reward for each completed trade. Default 0.15.
+        win_bonus_multiplier: Extra multiplier for winning trades. Default 2.5.
+        profit_scale: Scale factor for profit-based rewards. Default 25.0.
+        no_trade_penalty: Per-missing-trade penalty at episode end. Default 0.5.
         use_binary_rewards: Use binary win/loss rewards (False for profit-scaled).
     """
 
@@ -59,15 +61,17 @@ class TradingEnvironmentV2(gym.Env):
         max_steps: Optional[int] = None,
         fee_multiplier: float = 0.5,  # Start with half fees
         position_size: float = FIXED_POSITION_SIZE,
-        opportunity_penalty: float = 0.005,  # Penalty for missing clear opportunities
+        opportunity_penalty: float = 0.008,  # Increased: stronger penalty for missing opportunities
         min_trades_required: int = 3,  # Minimum trades target (3-5 optimal)
         max_trades_target: int = 5,  # Maximum trades before diminishing returns
-        trade_frequency_bonus: float = 0.3,  # Bonus for hitting 3-5 trade sweet spot
-        win_bonus_multiplier: float = 2.0,  # Extra reward for wins (increased)
-        profit_scale: float = 50.0,  # Scale factor for profit-based rewards
+        trade_frequency_bonus: float = 0.5,  # Increased: bigger bonus for hitting sweet spot
+        trade_attempt_bonus: float = 0.15,  # NEW: reward for each completed trade (encourages trading)
+        win_bonus_multiplier: float = 2.5,  # Increased: stronger win incentive
+        profit_scale: float = 25.0,  # Reduced from 50: less variance, more stable learning
         momentum_reward_scale: float = 0.003,  # Momentum tracking scale
-        use_binary_rewards: bool = False,  # CHANGED: Use profit-scaled rewards
-        min_profit_threshold: float = 0.005,  # Minimum return to count as win
+        use_binary_rewards: bool = False,  # Use profit-scaled rewards
+        min_profit_threshold: float = 0.003,  # Lowered: easier to count as win
+        no_trade_penalty: float = 0.5,  # NEW: per-missing-trade penalty (stronger than before)
     ):
         super().__init__()
 
@@ -81,11 +85,13 @@ class TradingEnvironmentV2(gym.Env):
         self.min_trades_required = min_trades_required
         self.max_trades_target = max_trades_target
         self.trade_frequency_bonus = trade_frequency_bonus
+        self.trade_attempt_bonus = trade_attempt_bonus
         self.win_bonus_multiplier = win_bonus_multiplier
         self.profit_scale = profit_scale
         self.momentum_reward_scale = momentum_reward_scale
         self.use_binary_rewards = use_binary_rewards
         self.min_profit_threshold = min_profit_threshold
+        self.no_trade_penalty = no_trade_penalty
 
         # Pre-compute price changes for hindsight rewards
         self.all_features = extract_features(candles)
@@ -252,27 +258,33 @@ class TradingEnvironmentV2(gym.Env):
                     else:
                         reward = -0.5
                 else:
-                    # Profit-maximizing rewards with win rate bonus
-                    # Base reward scaled by profit magnitude
+                    # Profit-maximizing rewards with trade encouragement
+                    # Every completed trade gets a base bonus (prevents no-trade collapse)
+                    reward = self.trade_attempt_bonus
+
+                    # Scale profit reward
                     profit_reward = trade_return * self.profit_scale
 
                     if trade_return > self.min_profit_threshold:
                         # Strong win: profit reward + win bonus
                         self.n_wins += 1
-                        reward = profit_reward * self.win_bonus_multiplier + 0.5
+                        reward += profit_reward * self.win_bonus_multiplier + 0.3
                     elif trade_return > 0:
                         # Small win: profit reward + smaller bonus
                         self.n_wins += 1
-                        reward = profit_reward * self.win_bonus_multiplier + 0.2
-                    elif trade_return > -0.005:
-                        # Tiny loss (breakeven): small penalty
-                        reward = profit_reward - 0.1
-                    elif trade_return > -0.02:
+                        reward += profit_reward * self.win_bonus_multiplier + 0.15
+                    elif trade_return > -0.003:
+                        # Near breakeven: neutral (trade attempt bonus only)
+                        reward += profit_reward * 0.5
+                    elif trade_return > -0.01:
+                        # Small loss: mild penalty (still better than not trading)
+                        reward += profit_reward * 0.8
+                    elif trade_return > -0.03:
                         # Moderate loss: scaled penalty
-                        reward = profit_reward * 1.5 - 0.2
+                        reward += profit_reward * 1.2
                     else:
-                        # Large loss: bigger penalty to discourage
-                        reward = profit_reward * 2.0 - 0.3
+                        # Large loss: penalty but still less than no-trade penalty
+                        reward += profit_reward * 1.5 - 0.1
 
                 self.in_position = False
                 self.entry_price = 0.0
@@ -333,28 +345,36 @@ class TradingEnvironmentV2(gym.Env):
                     reward += self.trade_frequency_bonus
                 elif self.n_trades <= self.max_trades_target + 3:
                     # 6-8 trades: acceptable but diminishing bonus
-                    reward += self.trade_frequency_bonus * 0.5
+                    reward += self.trade_frequency_bonus * 0.6
                 else:
                     # Over-trading (>8): small penalty
-                    reward -= 0.1
+                    reward -= 0.15
 
                 # Win rate bonus (scales with trade count)
-                if self.n_trades >= self.min_trades_required:
-                    current_win_rate = self.n_wins / self.n_trades
-                    if current_win_rate >= 0.9:
-                        reward += 1.0  # Big bonus for 90%+ win rate
-                    elif current_win_rate >= 0.8:
-                        reward += 0.6  # Good bonus for 80%+ win rate
-                    elif current_win_rate >= 0.7:
-                        reward += 0.3  # Smaller bonus for 70%+ win rate
+                current_win_rate = self.n_wins / self.n_trades
+                if current_win_rate >= 0.9:
+                    reward += 1.2  # Big bonus for 90%+ win rate
+                elif current_win_rate >= 0.8:
+                    reward += 0.8  # Good bonus for 80%+ win rate
+                elif current_win_rate >= 0.7:
+                    reward += 0.4  # Smaller bonus for 70%+ win rate
+                elif current_win_rate >= 0.5:
+                    reward += 0.1  # Small bonus for 50%+ win rate
 
                 # Profit magnitude bonus at end of episode
                 if self.total_pnl > 0:
-                    profit_bonus = min(1.0, self.total_pnl * 10)  # Cap at 1.0
+                    profit_bonus = min(1.5, self.total_pnl * 15)  # Increased cap
                     reward += profit_bonus
             else:
-                # Penalty for being too passive (< 3 trades)
-                passive_penalty = (self.min_trades_required - self.n_trades) * 0.2
+                # SEVERE penalty for being too passive (< 3 trades)
+                # This must be worse than any trading outcome to prevent no-trade collapse
+                missing_trades = self.min_trades_required - self.n_trades
+                passive_penalty = missing_trades * self.no_trade_penalty
+
+                # Extra penalty for 0 trades - this is unacceptable
+                if self.n_trades == 0:
+                    passive_penalty += 1.0  # Additional penalty for complete inaction
+
                 reward -= passive_penalty
 
         if self.current_step - MIN_HISTORY_LENGTH >= self.max_steps:
