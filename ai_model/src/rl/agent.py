@@ -208,7 +208,6 @@ class HybridLSTMAttentionExtractor(BaseFeaturesExtractor):
         super().__init__(observation_space, features_dim)
 
         input_dim = int(np.prod(observation_space.shape))
-        self.features_dim = features_dim
         self.lstm_hidden = lstm_hidden
 
         # Input projection
