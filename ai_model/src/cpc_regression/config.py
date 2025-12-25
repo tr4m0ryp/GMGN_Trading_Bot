@@ -57,6 +57,10 @@ class CPCConfig:
     scheduler: str = 'cosine'  # 'cosine', 'linear', 'constant'
     min_lr: float = 1e-6
 
+    # Early stopping
+    patience: int = 10
+    min_delta: float = 1e-4
+
 
 @dataclass
 class RegressionConfig:

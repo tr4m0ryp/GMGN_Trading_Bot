@@ -301,6 +301,7 @@ def train_cpc(
     # Training loop
     best_val_loss = float('inf')
     best_epoch = 0
+    patience_counter = 0
     history = {
         'train_loss': [],
         'val_loss': [],
@@ -383,7 +384,7 @@ def train_cpc(
                   f'time={epoch_time:.1f}s')
 
         # Save best model
-        if val_loss < best_val_loss:
+        if val_loss < best_val_loss - config.min_delta:
             best_val_loss = val_loss
             best_epoch = epoch + 1
 
@@ -399,6 +400,14 @@ def train_cpc(
 
             if verbose >= 1:
                 print(f'  -> New best model saved!')
+            
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= config.patience:
+                if verbose >= 1:
+                    print(f'Early stopping at epoch {epoch+1}')
+                break
 
         # Save checkpoint every 10 epochs
         if (epoch + 1) % 10 == 0:
