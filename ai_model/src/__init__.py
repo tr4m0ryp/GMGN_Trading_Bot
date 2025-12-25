@@ -1,47 +1,62 @@
 """
 AI Trading Model Package.
 
-This package contains the complete implementation of the variable-length
-LSTM trading model for GMGN token trading.
+This package contains the complete implementation of the CPC + Return Regression
+trading model and RL-based trading environment for GMGN token trading.
 
 Modules:
-    config: Configuration management
-    utils: Utility functions
-    data: Data loading and feature extraction
-    models: LSTM model architecture
-    training: Training logic
-    evaluation: Evaluation and backtesting
+    config: Configuration management (trading constants, model configs)
+    utils: Utility functions (seeding, logging, checkpoints)
+    data: Data loading and preprocessing
+    cpc_regression: CPC pretraining + Return regression models
+    training: Training pipelines (CPC and Regression trainers)
+    rl: Reinforcement learning environment and trainer
 
-Author: Trading Team
-Date: 2025-12-21
+Date: 2025-12-25
 """
 
-__version__ = '1.0.0'
+__version__ = '2.0.0'
 
-from .config import get_config, DEFAULT_CONFIG
-from .utils import set_seed, get_device, count_parameters
-from .models import VariableLengthLSTMTrader
-from .data import (
-    prepare_datasets,
-    load_preprocessed_datasets,
-    TradingDataset,
-    collate_variable_length,
+# Import configuration utilities
+from config import get_config, DEFAULT_CONFIG, ADVANCED_CONFIG
+
+# Import utility functions
+from utils import set_seed, get_device, count_parameters
+
+# CPC + Regression components (main training approach)
+from cpc_regression import (
+    CPCEncoder,
+    CPCModel,
+    ProbabilisticReturnHead,
+    KellyPositionSizer,
+    CPCConfig,
+    RegressionConfig,
+    KellyConfig,
 )
-from .training import train_model
-from .evaluation import evaluate_model, comprehensive_backtest
+
+# Training pipelines
+from training import train_cpc, train_regression
 
 __all__ = [
+    # Version
+    '__version__',
+    # Config
     'get_config',
     'DEFAULT_CONFIG',
+    'ADVANCED_CONFIG',
+    # Utils
     'set_seed',
     'get_device',
     'count_parameters',
-    'VariableLengthLSTMTrader',
-    'prepare_datasets',
-    'load_preprocessed_datasets',
-    'TradingDataset',
-    'collate_variable_length',
-    'train_model',
-    'evaluate_model',
-    'comprehensive_backtest',
+    # CPC + Regression
+    'CPCEncoder',
+    'CPCModel',
+    'ProbabilisticReturnHead',
+    'KellyPositionSizer',
+    'CPCConfig',
+    'RegressionConfig',
+    'KellyConfig',
+    # Training
+    'train_cpc',
+    'train_regression',
 ]

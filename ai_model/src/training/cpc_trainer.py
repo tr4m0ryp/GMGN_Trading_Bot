@@ -33,9 +33,9 @@ except ImportError:
     def tqdm(x, **kwargs):
         return x
 
-from ..cpc_regression.encoder import CPCEncoder
-from ..cpc_regression.cpc_model import CPCModel
-from ..cpc_regression.config import CPCConfig, detect_gpu, get_config_for_gpu
+from cpc_regression.encoder import CPCEncoder
+from cpc_regression.cpc_model import CPCModel
+from cpc_regression.config import CPCConfig, detect_gpu, get_config_for_gpu
 
 
 class CPCDataset(Dataset):

@@ -32,15 +32,15 @@ except ImportError:
     def tqdm(x, **kwargs):
         return x
 
-from ..cpc_regression.encoder import CPCEncoder
-from ..cpc_regression.cpc_model import CPCModel, CPCRegressionModel
-from ..cpc_regression.return_head import (
+from cpc_regression.encoder import CPCEncoder
+from cpc_regression.cpc_model import CPCModel, CPCRegressionModel
+from cpc_regression.return_head import (
     ProbabilisticReturnHead, MultiTaskLoss, CalibrationMetrics
 )
-from ..cpc_regression.config import (
+from cpc_regression.config import (
     CPCConfig, RegressionConfig, get_config_for_gpu
 )
-from .cpc_trainer import load_pretrained_encoder
+from training.cpc_trainer import load_pretrained_encoder
 
 
 class RegressionDataset(Dataset):
