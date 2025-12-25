@@ -600,6 +600,61 @@ def collate_variable_length(batch: List[Dict[str, Any]], max_seq_len: int = MAX_
     }
 
 
+def collate_for_regression(batch: List[Dict[str, Any]], max_seq_len: int = MAX_SEQ_LEN) -> Dict[str, torch.Tensor]:
+    """
+    Collate function for regression training with return/drawdown targets.
+
+    Similar to collate_variable_length but includes continuous regression
+    targets instead of classification labels.
+
+    Args:
+        batch: List of samples from TradingDataset.
+        max_seq_len: Maximum sequence length.
+
+    Returns:
+        Dictionary with padded tensors:
+            - features: (batch, max_seq_len, 14)
+            - seq_lengths: (batch,)
+            - return_target: (batch,) - potential_profit_pct
+            - drawdown_target: (batch,) - drawdown_pct
+
+    Example:
+        >>> loader = DataLoader(dataset, batch_size=32, collate_fn=collate_for_regression)
+    """
+    features = []
+    actual_lengths = []
+
+    for item in batch:
+        feat = torch.FloatTensor(item['features'])
+        seq_len = feat.size(0)
+
+        # Truncate to max_seq_len, keeping the most recent candles
+        if seq_len > max_seq_len:
+            feat = feat[-max_seq_len:]
+            # Re-normalize log_close feature
+            log_close_offset = feat[0, LOG_CLOSE_INDEX].clone()
+            feat[:, LOG_CLOSE_INDEX] = feat[:, LOG_CLOSE_INDEX] - log_close_offset
+            seq_len = max_seq_len
+
+        features.append(feat)
+        actual_lengths.append(seq_len)
+
+    seq_lengths = torch.LongTensor(actual_lengths)
+
+    # Regression targets (continuous values)
+    return_targets = torch.FloatTensor([item['potential_profit_pct'] for item in batch])
+    drawdown_targets = torch.FloatTensor([item['drawdown_pct'] for item in batch])
+
+    padded_features = pad_sequence(features, batch_first=True, padding_value=0.0)
+
+    return {
+        'features': padded_features,
+        'seq_lengths': seq_lengths,
+        'return_target': return_targets,
+        'drawdown_target': drawdown_targets,
+    }
+
+
 def prepare_datasets(csv_path: str,
                     train_split: float = 0.8,
                     val_split: float = 0.1,
