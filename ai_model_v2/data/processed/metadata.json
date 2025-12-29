@@ -13,14 +13,14 @@
     "test": 140
   },
   "entry": {
-    "train": 6153,
-    "val": 1206,
-    "test": 1408
+    "train": 3041,
+    "val": 631,
+    "test": 721
   },
   "exit": {
     "train": 4258,
     "val": 743,
     "test": 732
   },
-  "processing_time_seconds": 44.77107524871826
+  "processing_time_seconds": 28.253798723220825
 }
