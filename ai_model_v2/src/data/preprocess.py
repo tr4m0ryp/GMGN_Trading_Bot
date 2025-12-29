@@ -30,12 +30,12 @@ import pandas as pd
 # =============================================================================
 
 SCREENER_DECISION_TIME = 30
-SCREENER_WORTHY_THRESHOLD = 1.5  # Lowered from 2.0 to increase positive samples
+SCREENER_WORTHY_THRESHOLD = 2.0  # Original threshold
 SCREENER_LOOKAHEAD_SEC = 300
-ENTRY_PROFIT_THRESHOLD = 0.10  # Relaxed for more entry signals
-ENTRY_MAX_DRAWDOWN = 0.15  # Relaxed to allow reasonable volatility
-ENTRY_LOOKAHEAD_SEC = 90  # Balanced lookahead window
-ENTRY_SAMPLES_PER_TOKEN = 20  # Balanced sampling
+ENTRY_PROFIT_THRESHOLD = 0.20  # Original threshold
+ENTRY_MAX_DRAWDOWN = 0.15
+ENTRY_LOOKAHEAD_SEC = 60  # Original lookahead
+ENTRY_SAMPLES_PER_TOKEN = 50  # Original sampling
 EXIT_TRAILING_STOP_PCT = 0.15
 EXIT_STOP_LOSS_PCT = 0.25
 EXIT_PROFIT_TARGET_PCT = 2.00
@@ -278,11 +278,11 @@ def extract_screener_features(token: TokenData, decision_time: int = 30) -> Opti
     """
     Extract features for Model 1 (Screener).
 
-    Features designed to capture early momentum and volume patterns
-    that predict future price appreciation.
+    This is the ORIGINAL working feature extraction that achieved ROC-AUC 0.77.
+    Features focus on price changes, volume patterns, and momentum.
     """
     candles = token.candles[:decision_time]
-    if len(candles) < 10:
+    if len(candles) < 5:
         return None
 
     prices = np.array([c.close for c in candles])
@@ -290,139 +290,117 @@ def extract_screener_features(token: TokenData, decision_time: int = 30) -> Opti
     lows = np.array([c.low for c in candles])
     volumes = np.array([c.volume for c in candles])
 
-    first_price = prices[0]
+    entry_price = prices[0]
     current_price = prices[-1]
 
-    if first_price <= 0 or current_price <= 0:
+    if entry_price <= 0:
         return None
 
-    # === PRICE MOMENTUM FEATURES ===
-    # Returns at different timeframes
-    def safe_pct_change(arr, periods):
-        if len(arr) <= periods:
-            return 0.0
-        old_val = arr[-periods-1]
-        new_val = arr[-1]
-        return (new_val - old_val) / (old_val + 1e-10)
+    # === PRICE CHANGE FEATURES ===
+    def safe_return(idx):
+        if idx < len(prices) and idx > 0:
+            return (current_price - prices[-idx]) / prices[-idx] if prices[-idx] > 0 else 0.0
+        return 0.0
 
-    return_5s = safe_pct_change(prices, 5)
-    return_10s = safe_pct_change(prices, 10)
-    return_15s = safe_pct_change(prices, 15)
-    return_total = (current_price - first_price) / first_price
+    price_chg_5s = safe_return(5)
+    price_chg_15s = safe_return(15)
+    price_chg_30s = (current_price - entry_price) / entry_price if entry_price > 0 else 0.0
 
-    # Price acceleration (2nd derivative)
-    if len(prices) >= 15:
-        mid = len(prices) // 2
-        first_half_return = (prices[mid] - prices[0]) / (prices[0] + 1e-10)
-        second_half_return = (prices[-1] - prices[mid]) / (prices[mid] + 1e-10)
-        price_acceleration = second_half_return - first_half_return
-    else:
-        price_acceleration = 0.0
+    # === VOLUME CHANGE FEATURES ===
+    def safe_vol_change(idx):
+        if idx < len(volumes) and idx > 0:
+            recent = np.sum(volumes[-idx:])
+            earlier = np.sum(volumes[:-idx]) if len(volumes) > idx else recent
+            return (recent - earlier) / (earlier + 1e-6) if earlier > 0 else 0.0
+        return 0.0
+
+    vol_chg_5s = safe_vol_change(5)
+    vol_chg_15s = safe_vol_change(15)
+    vol_chg_30s = safe_vol_change(30)
+
+    # === PRICE RANGE FEATURES ===
+    period_high = np.max(highs)
+    period_low = np.min(lows)
+
+    high_low_ratio = (period_high - period_low) / entry_price if entry_price > 0 else 0.0
+    close_to_high = (current_price - period_high) / period_high if period_high > 0 else 0.0
+    close_to_low = (current_price - period_low) / period_low if period_low > 0 else 0.0
 
     # === VOLATILITY FEATURES ===
-    # High-low range relative to price
-    range_pcts = (highs - lows) / (prices + 1e-10)
-    avg_range = np.mean(range_pcts)
-    max_range = np.max(range_pcts)
+    def calc_volatility(window):
+        if window > len(prices):
+            window = len(prices)
+        if window < 2:
+            return 0.0
+        subset = prices[-window:]
+        returns = np.diff(subset) / subset[:-1]
+        return np.std(returns) if len(returns) > 0 else 0.0
 
-    # Price volatility (std of returns)
-    if len(prices) > 1:
-        log_returns = np.diff(np.log(np.clip(prices, 1e-10, None)))
-        volatility = np.std(log_returns) if len(log_returns) > 0 else 0.0
-    else:
-        volatility = 0.0
+    volatility_5s = calc_volatility(5)
+    volatility_15s = calc_volatility(15)
+    volatility_30s = calc_volatility(30)
 
-    # === VOLUME FEATURES ===
-    total_volume = np.sum(volumes)
-    avg_volume = np.mean(volumes)
-
-    # Volume trend (comparing halves)
-    if len(volumes) >= 10:
-        first_half_vol = np.mean(volumes[:len(volumes)//2])
-        second_half_vol = np.mean(volumes[len(volumes)//2:])
-        volume_trend = (second_half_vol - first_half_vol) / (first_half_vol + 1e-10)
-        volume_surge = second_half_vol / (first_half_vol + 1e-10)
-    else:
-        volume_trend = 0.0
-        volume_surge = 1.0
-
-    # Recent volume spike
-    if len(volumes) >= 5:
-        recent_vol = np.mean(volumes[-5:])
-        early_vol = np.mean(volumes[:-5]) if len(volumes) > 5 else recent_vol
-        volume_spike = recent_vol / (early_vol + 1e-10)
-    else:
-        volume_spike = 1.0
-
-    # Volume consistency (low std = consistent buying)
-    volume_consistency = np.std(volumes) / (np.mean(volumes) + 1e-10)
-
-    # === ORDER FLOW FEATURES ===
-    # Green vs red candles
-    green_candles = np.sum(prices[1:] > prices[:-1]) if len(prices) > 1 else 0
-    red_candles = np.sum(prices[1:] < prices[:-1]) if len(prices) > 1 else 0
-    green_ratio = green_candles / (green_candles + red_candles + 1e-10)
-
-    # Buy pressure (close near high vs low)
-    buy_pressure = np.mean((prices - lows) / (highs - lows + 1e-10))
-
-    # Consecutive green candles at end
-    consecutive_green = 0
-    for i in range(len(prices) - 1, 0, -1):
-        if prices[i] > prices[i-1]:
-            consecutive_green += 1
-        else:
-            break
-    consecutive_green_norm = consecutive_green / len(prices)
-
-    # === TREND STRENGTH ===
-    # Linear regression slope
+    # === TREND FEATURES ===
     if len(prices) >= 5:
         x = np.arange(len(prices))
         slope = np.polyfit(x, prices, 1)[0]
-        trend_strength = slope / (first_price + 1e-10)
+        trend_strength = slope / (entry_price + 1e-6)
     else:
         trend_strength = 0.0
 
-    # Distance from high
-    period_high = np.max(highs)
-    dist_from_high = (current_price - period_high) / (period_high + 1e-10)
+    # Momentum (rate of recent vs earlier changes)
+    if len(prices) >= 10:
+        mid = len(prices) // 2
+        early_change = (prices[mid] - prices[0]) / (prices[0] + 1e-6)
+        late_change = (prices[-1] - prices[mid]) / (prices[mid] + 1e-6)
+        momentum = late_change - early_change
+    else:
+        momentum = 0.0
 
-    # === RELATIVE FEATURES ===
-    # Current price position in range
-    period_low = np.min(lows)
-    price_position = (current_price - period_low) / (period_high - period_low + 1e-10)
+    # === RSI-LIKE FEATURE ===
+    if len(prices) > 1:
+        changes = np.diff(prices)
+        gains = np.sum(changes[changes > 0])
+        losses = abs(np.sum(changes[changes < 0]))
+        rsi = gains / (gains + losses + 1e-6)
+    else:
+        rsi = 0.5
+
+    # === VOLUME TREND ===
+    if len(volumes) >= 10:
+        first_half = np.mean(volumes[:len(volumes)//2])
+        second_half = np.mean(volumes[len(volumes)//2:])
+        volume_trend = (second_half - first_half) / (first_half + 1e-6)
+    else:
+        volume_trend = 0.0
+
+    # === PRICE ACCELERATION ===
+    if len(prices) >= 10:
+        mid = len(prices) // 2
+        first_vel = (prices[mid] - prices[0]) / mid if mid > 0 else 0
+        second_vel = (prices[-1] - prices[mid]) / (len(prices) - mid) if len(prices) > mid else 0
+        price_acceleration = (second_vel - first_vel) / (entry_price + 1e-6)
+    else:
+        price_acceleration = 0.0
+
+    # === CANDLE PATTERN FEATURES ===
+    bodies = prices - np.array([c.open for c in candles])
+    candle_body_ratio = np.mean(bodies) / (entry_price + 1e-6)
+
+    green_candles = np.sum(bodies > 0)
+    num_green_candles = green_candles / len(candles)
 
     # === ASSEMBLE FEATURES ===
     features = np.array([
-        # Price momentum (5)
-        return_5s,
-        return_10s,
-        return_15s,
-        return_total,
-        price_acceleration,
-        # Volatility (3)
-        avg_range,
-        max_range,
-        volatility,
-        # Volume (5)
-        np.log1p(total_volume),
-        volume_trend,
-        volume_surge,
-        volume_spike,
-        volume_consistency,
-        # Order flow (4)
-        green_ratio,
-        buy_pressure,
-        consecutive_green_norm,
-        trend_strength,
-        # Price position (2)
-        dist_from_high,
-        price_position,
+        price_chg_5s, price_chg_15s, price_chg_30s,
+        vol_chg_5s, vol_chg_15s, vol_chg_30s,
+        high_low_ratio, close_to_high, close_to_low,
+        volatility_5s, volatility_15s, volatility_30s,
+        trend_strength, momentum, rsi,
+        volume_trend, price_acceleration, candle_body_ratio, num_green_candles,
     ], dtype=np.float32)
 
-    # Clip extreme values and handle NaN/inf
-    features = np.clip(features, -5.0, 5.0)
+    features = np.clip(features, -10.0, 10.0)
     features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
 
     return features
@@ -430,11 +408,12 @@ def extract_screener_features(token: TokenData, decision_time: int = 30) -> Opti
 
 # Feature names for screener (must match extract_screener_features output)
 SCREENER_FEATURE_NAMES = [
-    "return_5s", "return_10s", "return_15s", "return_total", "price_acceleration",
-    "avg_range", "max_range", "volatility",
-    "volume_log", "volume_trend", "volume_surge", "volume_spike", "volume_consistency",
-    "green_ratio", "buy_pressure", "consecutive_green", "trend_strength",
-    "dist_from_high", "price_position",
+    "price_chg_5s", "price_chg_15s", "price_chg_30s",
+    "vol_chg_5s", "vol_chg_15s", "vol_chg_30s",
+    "high_low_ratio", "close_to_high", "close_to_low",
+    "volatility_5s", "volatility_15s", "volatility_30s",
+    "trend_strength", "momentum", "rsi",
+    "volume_trend", "price_acceleration", "candle_body_ratio", "num_green_candles",
 ]
 
 
@@ -547,77 +526,54 @@ def generate_screener_label(token: TokenData, decision_time: int = 30) -> Option
 
 def generate_entry_label(candles: List[Candle], current_idx: int) -> Optional[int]:
     """
-    Generate entry label using forward-looking risk-reward analysis.
+    Generate entry label - ORIGINAL working version.
 
-    All labels are based on future outcomes for consistency:
-    - ENTER_NOW: Good risk-reward ratio (profit > loss, gain achievable)
-    - ABORT: Poor future outcome (significant loss ahead)
-    - WAIT: Unclear signal (neither good nor bad)
+    Labels:
+    - ENTER_NOW: Good opportunity (gain possible, acceptable drawdown)
+    - ABORT: Bad situation (significant drop or declining volume)
+    - WAIT: Unclear signal
     """
     if current_idx >= len(candles) - ENTRY_LOOKAHEAD_SEC - DELAY_SECONDS:
         return None
 
     entry_price = get_execution_price(candles, current_idx, is_buy=True)
-    if entry_price <= 0:
-        return None
 
     future_start = current_idx + DELAY_SECONDS
     future_end = min(future_start + ENTRY_LOOKAHEAD_SEC, len(candles))
     future_candles = candles[future_start:future_end]
 
-    if len(future_candles) < 10:
+    if not future_candles:
         return None
 
-    # Calculate future price extremes
-    future_highs = [c.high for c in future_candles]
-    future_lows = [c.low for c in future_candles]
-    future_closes = [c.close for c in future_candles]
+    max_future_high = max(c.high for c in future_candles)
+    min_future_low = min(c.low for c in future_candles)
 
-    max_future_high = max(future_highs)
-    min_future_low = min(future_lows)
-    final_close = future_closes[-1]
+    max_gain = (max_future_high - entry_price) / entry_price if entry_price > 0 else 0.0
+    max_loss = (min_future_low - entry_price) / entry_price if entry_price > 0 else 0.0
 
-    # Calculate gains and losses
-    max_gain = (max_future_high - entry_price) / entry_price
-    max_drawdown = (min_future_low - entry_price) / entry_price
-    final_return = (final_close - entry_price) / entry_price
+    # Check for abort conditions based on current state
+    lookback = min(30, current_idx)
+    recent_candles = candles[current_idx - lookback:current_idx + 1]
+    recent_high = max(c.high for c in recent_candles) if recent_candles else entry_price
+    current_price = candles[current_idx].close
 
-    # Find when max gain and max drawdown occur
-    time_to_high = future_highs.index(max_future_high)
-    time_to_low = future_lows.index(min_future_low)
+    dist_from_peak = (current_price - recent_high) / recent_high if recent_high > 0 else 0.0
+    significant_drop = dist_from_peak < -0.20
 
-    # Risk-reward ratio (only if there's potential gain)
-    if max_gain > 0.01:
-        risk_reward = max_gain / (abs(max_drawdown) + 0.01)
+    if len(recent_candles) >= 10:
+        vol_first = np.mean([c.volume for c in recent_candles[:len(recent_candles)//2]])
+        vol_second = np.mean([c.volume for c in recent_candles[len(recent_candles)//2:]])
+        volume_declining = vol_second < vol_first * 0.5
     else:
-        risk_reward = 0.0
+        volume_declining = False
 
-    # === LABELING LOGIC ===
-
-    # ENTER_NOW conditions (relaxed for more signals):
-    # 1. Potential gain exceeds threshold
-    # 2. Max drawdown is acceptable
-    # 3. Reasonable risk-reward ratio (> 1.0)
-    is_profitable = max_gain >= ENTRY_PROFIT_THRESHOLD
-    is_safe = max_drawdown > -ENTRY_MAX_DRAWDOWN
-    decent_risk_reward = risk_reward >= 1.0
-
-    if is_profitable and is_safe and decent_risk_reward:
+    # Label assignment
+    if max_gain >= ENTRY_PROFIT_THRESHOLD and max_loss > -ENTRY_MAX_DRAWDOWN:
         return EntryLabel.ENTER_NOW
-
-    # ABORT conditions (clear danger signals):
-    # 1. Severe drawdown ahead (> 25%)
-    # 2. Price ends significantly lower than entry
-    # 3. Immediate dump (drawdown early and significant)
-    severe_drawdown = max_drawdown < -0.25
-    ends_badly = final_return < -0.20
-    early_dump = time_to_low < 15 and max_drawdown < -0.15
-
-    if severe_drawdown or ends_badly or early_dump:
+    elif significant_drop or volume_declining:
         return EntryLabel.ABORT
-
-    # WAIT: Signal is unclear
-    return EntryLabel.WAIT
+    else:
+        return EntryLabel.WAIT
 
 
 def generate_exit_label(
