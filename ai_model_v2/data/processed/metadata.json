@@ -1,0 +1,26 @@
+{
+  "csv_path": "/workspaces/GMGN_TradingBot/ai_data/data/combined_tokens.csv",
+  "random_seed": 42,
+  "token_counts": {
+    "total": 956,
+    "train": 669,
+    "val": 143,
+    "test": 144
+  },
+  "screener": {
+    "train": 648,
+    "val": 138,
+    "test": 140
+  },
+  "entry": {
+    "train": 6153,
+    "val": 1206,
+    "test": 1408
+  },
+  "exit": {
+    "train": 4258,
+    "val": 743,
+    "test": 732
+  },
+  "processing_time_seconds": 44.77107524871826
+}
