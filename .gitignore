@@ -31,13 +31,28 @@ Thumbs.db
 # Dependency files
 *.d
 
-# Compiled binary (if not in build/)
+# Compiled binaries (if not in build/)
 gmgn_logger
+ai_data_collector
+ai_trader
 
 # Configuration with secrets
 config/gmgn_logger.local.conf
 *.secret
 *.key
+.env
+!.env.example
+
+# Model checkpoints and data
+*.pt
+*.pth
+*.ckpt
+*.pkl
+!data/processed/**/*.pkl
+
+# Logs
+**/logs/*.json
+**/logs/*.txt
 
 # Core dumps
 core

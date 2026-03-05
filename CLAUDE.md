@@ -8,32 +8,67 @@ This project focuses on **C programming** as the primary language due to its sup
 
 This is a **GMGN Trading Bot** project with multiple components:
 
-1. **logger_c/** - Real-time token logger that connects to GMGN.ai WebSocket API
-2. **trading_algorithm/** - (Future) Mathematical trading algorithm based on logger analysis
-3. **logger/** - (Legacy) JavaScript-based network capture utilities
+1. **logger/** - C-based real-time token logger (WebSocket connection to GMGN.ai)
+2. **trader/** - C-based trading engine (Solana transactions, Jito bundles)
+3. **collector/** - C-based data collector for token chart history
+4. **models/** - Python ML models (screener, entry, exit, RL agent, CPC regression)
+5. **data/** - Consolidated datasets (raw CSVs, processed train/val/test splits)
+6. **legacy/** - Deprecated JavaScript network capture utilities
 
 ## Project Structure
 
 ```
-gmgn_trading/
-├── CLAUDE.md              # This file - development guidelines
-├── README.md              # Project overview
-├── config/                # Configuration files
-├── logger_c/              # C-based real-time token logger
-│   ├── src/               # Source files (.c)
-│   ├── include/           # Header files (.h)
-│   ├── build/             # Compiled binaries
-│   └── Makefile           # Build configuration
-├── trading_algorithm/     # (Future) Trading algorithm component
-├── data_analysis/         # (Future) Token analysis and ML models
-└── logger/                # Legacy JS network capture tools
+GMGN_TradingBot/
+├── CLAUDE.md
+├── README.md
+├── .gitignore
+├── config/                     # Configuration files
+│   └── gmgn_logger.conf
+├── data/                       # All datasets consolidated
+│   ├── raw/                    # Original immutable CSVs
+│   ├── processed/              # Train/val/test splits
+│   │   ├── v1/                 # Single-model processed data
+│   │   └── v2/                 # Multi-model processed data
+│   └── scripts/                # Data processing utilities
+├── models/                     # Python ML models (merged ai_model + ai_model_v2)
+│   ├── src/
+│   │   ├── config/             # Model configuration
+│   │   ├── data/               # Data loading, features, preprocessing
+│   │   ├── models/             # Model architectures
+│   │   │   ├── screener.py     # Token screener model
+│   │   │   ├── entry.py        # Entry timing model
+│   │   │   ├── exit.py         # Exit timing model
+│   │   │   ├── cpc_regression/ # CPC + regression models
+│   │   │   └── rl/             # Reinforcement learning agent
+│   │   ├── training/           # All trainers
+│   │   ├── backtesting/        # Backtesting engine
+│   │   └── utils/
+│   ├── notebooks/              # Jupyter training notebooks
+│   └── requirements.txt
+├── logger/                     # C WebSocket logger
+│   ├── src/
+│   ├── include/
+│   └── Makefile
+├── trader/                     # C trading engine
+│   ├── src/
+│   ├── include/
+│   ├── scripts/
+│   └── Makefile
+├── collector/                  # C data collector
+│   ├── src/
+│   ├── include/
+│   └── Makefile
+├── scripts/                    # Utility/install scripts
+└── legacy/                     # Deprecated JS logger
 ```
 
 ### Component Directories
 
-- **logger_c/**: The C-based GMGN token logger - connects to WebSocket, filters tokens
-- **trading_algorithm/**: (Future) Trading decision engine using mathematical models
-- **data_analysis/**: (Future) Historical data analysis and pattern recognition
+- **logger/**: C-based GMGN token logger - connects to WebSocket, filters tokens
+- **trader/**: C-based trading engine - Solana transactions, Jito bundles, Telegram alerts
+- **collector/**: C-based data collector - fetches and stores token chart history
+- **models/**: Python ML pipeline - screener, entry, exit models + RL agent + backtesting
+- **data/**: Consolidated datasets and data processing scripts
 
 ---
 
